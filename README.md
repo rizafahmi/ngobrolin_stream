@@ -222,10 +222,13 @@ They are only used by `scripts/mint.ts` on the captain's own machine.
 Verified end to end, locally, against a real LiveKit server and real WebRTC media:
 
 - Two guests in two independent browser contexts, publishing and receiving real audio and video.
+- **Three guests at once**, the real show size: one row of 458x258 tiles, with the page scrolling in neither axis.
 - The quality split: the same guest decoding at 1280x720 in the OBS page and 320x180 in another guest's grid at the same time.
 - Two OBS browser sources connected simultaneously without evicting each other.
 - Identity stability across a full guest session restart, including a changed display name, with the OBS source never reloaded.
 - The OBS page blanking when its guest leaves, and re-acquiring when they return.
+- The in-room mic and camera buttons: the muted badge and the avatar placeholder appearing on the *other* guests' tiles, the OBS source going black while the camera is off, and everything recovering when it comes back on, including the grid re-applying its low-quality subscription to the republished track.
+- Leaving with **Keluar** re-laying the remaining tiles out from three columns to two, and returning that guest to the join screen.
 - OBS connections staying invisible to guests, so nobody sees a ghost tile.
 - The OBS page containing no accessible content at all beyond the video element.
 - The join page's permission, denied, no-device, ready, and broken-link states, all rendering at identical card geometry so nothing shifts under the pointer.
