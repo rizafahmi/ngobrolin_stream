@@ -1,0 +1,141 @@
+---
+// Join page. Everything below the join button is client-side; the server ships plain
+// HTML. Guest-facing copy is Indonesian by design.
+import '../styles/join.css';
+---
+
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Ngobrolin - Masuk Studio</title>
+  </head>
+  <body>
+    <!-- ================= Stage 1: join ================= -->
+    <section id="stage-join">
+      <div class="card">
+        <div class="card-head">
+          <h1 class="wordmark">Ngobrol<span>in</span></h1>
+          <p>Studio rekaman</p>
+        </div>
+
+        <div class="preview">
+          <video id="preview-video" autoplay playsinline muted hidden></video>
+          <div class="preview-placeholder" id="preview-placeholder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="2" y="6" width="13" height="12" rx="2" />
+              <path d="M15 10.5 22 7v10l-7-3.5z" />
+            </svg>
+            <span id="preview-caption">Kamera belum aktif</span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <!-- State: waiting for the guest to trigger the permission prompt. -->
+          <div id="panel-permission">
+            <h2>Izinkan kamera dan mikrofon</h2>
+            <p>
+              Setelah kamu menekan tombol di bawah, Chrome akan menampilkan kotak kecil di pojok
+              kiri atas layar. Pilih <strong>Izinkan</strong> supaya wajah dan suara kamu bisa
+              dikirim ke studio.
+            </p>
+            <div class="spacer"></div>
+            <button class="btn" id="btn-permission" type="button">Izinkan Kamera &amp; Mikrofon</button>
+          </div>
+
+          <!-- State: permission was denied, this time or on a previous visit. -->
+          <div id="panel-denied" hidden>
+            <h2>Kamera dan mikrofon diblokir</h2>
+            <p>Chrome masih menolak akses. Buka lagi izinnya seperti ini:</p>
+            <ol>
+              <li>Klik ikon <strong>kamera dicoret</strong> di ujung kanan kolom alamat Chrome.</li>
+              <li>Pilih <strong>Selalu izinkan</strong> untuk kamera dan mikrofon.</li>
+              <li>Klik <strong>Selesai</strong>, lalu tekan tombol di bawah.</li>
+            </ol>
+            <div class="spacer"></div>
+            <button class="btn" id="btn-retry" type="button">Coba Lagi</button>
+          </div>
+
+          <!-- State: no camera or microphone exists on the machine. -->
+          <div id="panel-nodevice" hidden>
+            <h2>Kamera atau mikrofon tidak terdeteksi</h2>
+            <p>
+              Pastikan webcam dan headset sudah tercolok, lalu tutup aplikasi lain yang mungkin
+              sedang memakainya (Zoom, Meet, Photo Booth).
+            </p>
+            <div class="spacer"></div>
+            <button class="btn" id="btn-retry-device" type="button">Coba Lagi</button>
+          </div>
+
+          <!-- State: ready to join. -->
+          <div id="panel-ready" hidden>
+            <div class="field">
+              <label for="input-name">Nama kamu</label>
+              <input id="input-name" type="text" autocomplete="off" maxlength="40" placeholder="Nama yang muncul di layar" />
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="select-camera">Kamera</label>
+                <select id="select-camera"></select>
+              </div>
+              <div class="field">
+                <label for="select-mic">Mikrofon</label>
+                <select id="select-mic"></select>
+              </div>
+            </div>
+            <div class="meter"><div class="meter-fill" id="meter-fill"></div></div>
+            <p class="hint">Coba bicara sebentar. Batang hijau di atas harus bergerak.</p>
+            <div class="spacer"></div>
+            <button class="btn" id="btn-join" type="button">Masuk Studio</button>
+          </div>
+
+          <!-- State: the link itself is unusable, so nothing else can help. -->
+          <div id="panel-fatal" hidden>
+            <h2 id="fatal-title">Link tidak lengkap</h2>
+            <p id="fatal-body">
+              Link ini tidak berisi kode masuk. Minta link baru ke Riza, lalu buka link itu
+              langsung tanpa mengetik ulang alamatnya.
+            </p>
+          </div>
+
+          <div class="alert" id="join-error" hidden></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= Stage 2: in-room ================= -->
+    <section id="stage-room" hidden>
+      <header class="room-head">
+        <h1 class="wordmark">Ngobrol<span>in</span></h1>
+        <span class="status" id="room-status" data-state="connecting">Menyambung...</span>
+      </header>
+
+      <div class="grid" id="grid"></div>
+
+      <footer class="room-foot">
+        <button class="ctrl" id="btn-mic" type="button" data-off="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <rect x="9" y="2" width="6" height="11" rx="3" />
+            <path d="M5 11a7 7 0 0 0 14 0M12 18v4" />
+          </svg>
+          <span id="btn-mic-label">Mikrofon aktif</span>
+        </button>
+        <button class="ctrl" id="btn-cam" type="button" data-off="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <rect x="2" y="6" width="13" height="12" rx="2" />
+            <path d="M15 10.5 22 7v10l-7-3.5z" />
+          </svg>
+          <span id="btn-cam-label">Kamera aktif</span>
+        </button>
+        <button class="ctrl ctrl-leave" id="btn-leave" type="button">Keluar</button>
+      </footer>
+    </section>
+
+    <script>
+      import { startJoinPage } from '../scripts/join.ts';
+      startJoinPage();
+    </script>
+  </body>
+</html>

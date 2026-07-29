@@ -1,0 +1,26 @@
+# Self-hosted LiveKit for the real show.
+#
+# The fast local test loop does NOT use this: it uses the standalone
+# `livekit-server --dev` binary, which needs no VM and starts instantly.
+# This file is the documented path for running the SFU on a server the captain owns.
+#
+# NOTE: this compose file has not been run end to end. See the "Self-hosting" section
+# of README.md for exactly what is and is not verified.
+#
+#   podman machine start          # the VM is stopped by default
+#   podman-compose up -d
+#
+# Host networking is deliberate. WebRTC needs a wide UDP port range, and publishing
+# thousands of ports individually is far slower to start and easy to get wrong.
+services:
+  livekit:
+    image: docker.io/livekit/livekit-server:v1.13.4
+    container_name: ngobrolin-livekit
+    restart: unless-stopped
+    network_mode: host
+    command: --config /etc/livekit/livekit.yaml
+    volumes:
+      - ./livekit.yaml:/etc/livekit/livekit.yaml:ro
+    environment:
+      # Read from the shell or from .env. Never hardcode these here.
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"

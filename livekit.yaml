@@ -1,0 +1,29 @@
+# LiveKit server config for the self-hosted deployment (see podman-compose.yml).
+#
+# API keys are NOT here. They come from the LIVEKIT_KEYS environment variable, which
+# podman-compose.yml builds from LIVEKIT_API_KEY and LIVEKIT_API_SECRET.
+#
+# NOTE: this config has not been run end to end. Local verification used
+# `livekit-server --dev` instead.
+
+port: 7880
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 60000
+  # Set this to the server's public IPv4 address if autodetection picks the wrong one.
+  # use_external_ip: true
+
+# TURN relay. Off by default because it needs a real domain and a certificate.
+# Turn this on when a guest cannot connect at all - see the TURN section of README.md.
+turn:
+  enabled: false
+  # domain: livekit.example.com
+  # tls_port: 5349
+  # udp_port: 3478
+  # External TLS means a reverse proxy terminates TLS and LiveKit does not read certs.
+  # external_tls: true
+
+logging:
+  level: info

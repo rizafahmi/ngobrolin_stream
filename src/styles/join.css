@@ -1,0 +1,478 @@
+/* Join page and in-room grid.
+   Target is desktop Chrome on a laptop; there is no mobile breakpoint on purpose. */
+
+:root {
+  --bg: #0b0d10;
+  --surface: #14181d;
+  --surface-raised: #1c2128;
+  --line: #2a3038;
+  --text: #e8eaed;
+  --text-muted: #9aa0a6;
+  --accent: #ff6b35;
+  --accent-text: #12080b;
+  --danger: #e5484d;
+  --ok: #3ecf8e;
+  --radius: 12px;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* ---------- Stage: join ---------- */
+
+#stage-join {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+}
+
+.card {
+  width: 560px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 28px;
+}
+
+.card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.wordmark {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.wordmark span {
+  color: var(--accent);
+}
+
+.card-head p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* The preview box is always in the DOM at a fixed aspect ratio so the card does not
+   jump when the camera turns on. */
+.preview {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  background: #000;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.preview video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Self-view is mirrored so guests can frame themselves. Only the preview is
+     mirrored; what other people and OBS receive is never flipped. */
+  transform: scaleX(-1);
+  display: block;
+}
+
+.preview-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  padding: 0 24px;
+}
+
+.preview-placeholder svg {
+  width: 28px;
+  height: 28px;
+  opacity: 0.6;
+}
+
+/* Fixed floor under the panel keeps the two common states the same height, so the
+   card does not resize under the pointer when permission is granted. */
+.panel {
+  /* Tallest state (panel-ready) measured in Chrome at 271px. Pinning the floor here
+     means switching states never resizes the card, so nothing moves under the
+     guest's pointer when permission is granted or an error appears. */
+  min-height: 272px;
+  padding-top: 20px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Each state is itself a column that fills the panel, so the .spacer inside it can
+   push the primary button to the same baseline in every state. Without this the
+   button floats at the top of a fixed-height box and the card looks bottom-heavy. */
+.panel > div:not(.alert) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel h2 {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 620;
+}
+
+.panel p {
+  margin: 0 0 16px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.panel ol {
+  margin: 0 0 16px;
+  padding-left: 20px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.panel ol li {
+  margin-bottom: 6px;
+}
+
+.panel strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* ---------- Form ---------- */
+
+.field {
+  margin-bottom: 14px;
+}
+
+.field label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.field input,
+.field select {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  background: var(--surface-raised);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font: inherit;
+  /* Long device labels ("Logitech BRIO (046d:085e)") must not widen the card. */
+  text-overflow: ellipsis;
+}
+
+.field select {
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath fill='%239aa0a6' d='M1 1.5 6 6.5l5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 12px 8px;
+  padding-right: 34px;
+}
+
+.field input:focus,
+.field select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: transparent;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+/* ---------- Mic level ---------- */
+
+.meter {
+  height: 6px;
+  margin-top: 8px;
+  background: var(--surface-raised);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--ok);
+  border-radius: 3px;
+  transition: width 80ms linear;
+}
+
+.hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ---------- Buttons ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 44px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--surface-raised);
+  filter: none;
+}
+
+/* ---------- Alerts ---------- */
+
+.alert {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--danger);
+  background: rgba(229, 72, 77, 0.1);
+  color: #ffb4b6;
+  font-size: 13px;
+}
+
+/* ---------- Stage: room ---------- */
+
+#stage-room {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.room-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.status::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.status[data-state='connected']::before {
+  background: var(--ok);
+}
+
+.status[data-state='reconnecting']::before {
+  background: var(--accent);
+}
+
+.status[data-state='disconnected']::before {
+  background: var(--danger);
+}
+
+.grid {
+  flex: 1;
+  display: grid;
+  gap: 12px;
+  padding: 16px 20px;
+  align-content: center;
+  justify-content: center;
+  /* grid-template-columns is set from JS via gridColumns(). */
+}
+
+.tile {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  min-width: 0;
+  background: #000;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.tile video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.tile.is-local video {
+  transform: scaleX(-1);
+}
+
+.tile-name {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  max-width: calc(100% - 16px);
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tile-muted {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  color: var(--danger);
+}
+
+.tile-muted svg {
+  width: 13px;
+  height: 13px;
+}
+
+.tile-avatar {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 26px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface-raised);
+}
+
+.room-foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--line);
+  flex: none;
+}
+
+.ctrl {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 550;
+  /* Both label states are pre-measured to the same width so the bar never jitters. */
+  min-width: 132px;
+  justify-content: center;
+}
+
+.ctrl:hover {
+  background: var(--surface-raised);
+}
+
+.ctrl[data-off='true'] {
+  border-color: var(--danger);
+  color: #ffb4b6;
+}
+
+.ctrl svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.ctrl-leave {
+  border-color: var(--danger);
+  color: #ffb4b6;
+  min-width: 100px;
+}

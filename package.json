@@ -1,0 +1,27 @@
+{
+  "name": "ngobrolin-stream",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-owned guest-join layer for the Ngobrolin podcast: guests publish to LiveKit, OBS pulls one browser source per guest.",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "mint": "node --env-file-if-exists=.env scripts/mint.ts"
+  },
+  "dependencies": {
+    "astro": "^7.1.5",
+    "livekit-client": "^2.21.0",
+    "livekit-server-sdk": "^2.17.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "@types/node": "^26.1.2",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
