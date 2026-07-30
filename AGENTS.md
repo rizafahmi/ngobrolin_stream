@@ -18,6 +18,8 @@ Any change to slugging is a breaking change to every OBS scene the captain has s
 - **Chrome withholds usable ICE candidates from pages that never call `getUserMedia`.** The OBS view page is one, so local browser testing of `/view` needs `--use-fake-device-for-media-stream --use-fake-ui-for-media-stream`. Without it the page connects and is dropped seconds later with all ICE pairs failed. This is a local-testing artifact only.
 - **Astro dev HMR kicks connected guests back to the join screen** when any source file changes. Verify live sessions against `npm run build && npx astro preview`.
 - **Create local tracks with one `createLocalTracks` call.** Calling `createLocalVideoTrack` and `createLocalAudioTrack` concurrently never settles.
+- **`PUBLIC_` variables are frozen into the bundle at build time**, so creating `.env` after a build changes nothing until you rebuild.
+  The build now throws instead of shipping a bundle with no server address; see the gate at the top of `astro.config.mjs`.
 - Each OBS source needs its own identity (`obs-<slug>`). LiveKit evicts the older session on duplicate identity, so a shared viewer token would leave only the last browser source alive.
 
 ## Conventions
