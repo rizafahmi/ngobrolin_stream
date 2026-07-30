@@ -16,11 +16,13 @@ import {
   Track,
   VideoPresets,
   createLocalTracks,
+  supportsAudioOutputSelection,
   type Participant,
   type RemoteParticipant,
 } from 'livekit-client';
 
 import { connectionStatus } from '../lib/connection-status.ts';
+import { deviceOptions, offerSpeakerPicker, resolveActiveDevice, type DeviceOption } from '../lib/devices.ts';
 import { ROOM_NAME } from '../lib/identity.ts';
 import { gridColumns, orderTiles, tileWidth } from '../lib/layout.ts';
 import { classifyJoinFailure, classifyMediaError } from '../lib/media-errors.ts';
@@ -46,6 +48,9 @@ export function startJoinPage(): void {
   const preview: PreviewState = { video: null, audio: null };
   let room: Room | null = null;
   let meterStop: (() => void) | null = null;
+  // The speaker chosen on the join card, carried into Room options at join time.
+  // Session-scoped on purpose: a reload goes back to the browser default.
+  let speakerId: string | undefined;
 
   const token = new URLSearchParams(window.location.search).get('t');
 
@@ -146,28 +151,31 @@ export function startJoinPage(): void {
     // Labels are empty until permission is granted, which is why this runs after
     // the tracks exist rather than on page load.
     const devices = await navigator.mediaDevices.enumerateDevices();
-    fillSelect(el.selectCamera, devices, 'videoinput', preview.video?.mediaStreamTrack, 'Kamera');
-    fillSelect(el.selectMic, devices, 'audioinput', preview.audio?.mediaStreamTrack, 'Mikrofon');
+    const camId = preview.video?.mediaStreamTrack.getSettings().deviceId;
+    const micId = preview.audio?.mediaStreamTrack.getSettings().deviceId;
+    renderSelect(el.selectCamera, deviceOptions(devices, 'videoinput', camId, 'Kamera'));
+    renderSelect(el.selectMic, deviceOptions(devices, 'audioinput', micId, 'Mikrofon'));
+
+    const offerSpeaker = offerSpeakerPicker(supportsAudioOutputSelection(), devices);
+    el.fieldSpeaker.hidden = !offerSpeaker;
+    if (offerSpeaker) {
+      // If the chosen speaker was unplugged, fall back to the browser default so the
+      // picker never claims a device that no longer exists.
+      speakerId = resolveActiveDevice(speakerId, devices, 'audiooutput');
+      renderSelect(el.selectSpeaker, deviceOptions(devices, 'audiooutput', speakerId, 'Speaker'));
+    }
   }
 
-  function fillSelect(
-    select: HTMLSelectElement,
-    devices: MediaDeviceInfo[],
-    kind: MediaDeviceKind,
-    active: MediaStreamTrack | undefined,
-    fallbackLabel: string,
-  ): void {
-    const activeId = active?.getSettings().deviceId;
-    select.replaceChildren();
-    devices
-      .filter((device) => device.kind === kind)
-      .forEach((device, index) => {
+  function renderSelect(select: HTMLSelectElement, options: DeviceOption[]): void {
+    select.replaceChildren(
+      ...options.map((entry) => {
         const option = document.createElement('option');
-        option.value = device.deviceId;
-        option.textContent = device.label || `${fallbackLabel} ${index + 1}`;
-        option.selected = device.deviceId === activeId;
-        select.append(option);
-      });
+        option.value = entry.value;
+        option.textContent = entry.label;
+        option.selected = entry.selected;
+        return option;
+      }),
+    );
   }
 
   // Device switching is only offered before joining, so there is no published track
@@ -245,6 +253,9 @@ export function startJoinPage(): void {
         dynacast: true,
         videoCaptureDefaults: { resolution: PUBLISH_VIDEO_PRESET.resolution },
         audioCaptureDefaults: { ...AUDIO_CAPTURE_CONSTRAINTS },
+        // The speaker picked on the join card. The Room applies it to every remote
+        // audio element it knows about, including tiles created later.
+        audioOutput: speakerId ? { deviceId: speakerId } : undefined,
       });
       wireRoomEvents(room);
 
@@ -298,6 +309,12 @@ export function startJoinPage(): void {
       .on(RoomEvent.TrackUnmuted, rerender)
       .on(RoomEvent.ParticipantNameChanged, rerender)
       .on(RoomEvent.LocalTrackPublished, rerender)
+      .on(RoomEvent.ActiveDeviceChanged, (kind, deviceId) => {
+        // Fires on our own switches and on livekit's automatic fallback when the
+        // active device is unplugged; either way the open picker must follow.
+        if (kind === 'audiooutput') speakerId = deviceId;
+        if (!el.devicesPop.hidden) void refreshRoomDeviceLists();
+      })
       .on(RoomEvent.ConnectionStateChanged, (state) => {
         updateStatus(state);
         renderGrid();
@@ -469,6 +486,75 @@ export function startJoinPage(): void {
     window.location.reload();
   }
 
+  // ---------- in-room device switching ----------
+
+  function toggleDevicesPop(): void {
+    const show = el.devicesPop.hidden;
+    if (show) void refreshRoomDeviceLists();
+    el.devicesPop.hidden = !show;
+    el.btnDevices.dataset.active = String(show);
+  }
+
+  function closeDevicesPop(): void {
+    el.devicesPop.hidden = true;
+    el.btnDevices.dataset.active = 'false';
+  }
+
+  /**
+   * The id the picker should mark as active for a local input.
+   *
+   * `getActiveDevice` starts as the placeholder 'default' before any switch, which
+   * for cameras is not a real Chrome device id, so the published track's own
+   * settings are the source of truth until a switch has recorded a concrete id.
+   * After a switch-while-muted the map is ahead of the (stopped) track, which is
+   * exactly when the map must win.
+   */
+  function activeInputId(kind: 'videoinput' | 'audioinput', source: Track.Source): string | undefined {
+    const fromRoom = room?.getActiveDevice(kind);
+    if (fromRoom && fromRoom !== 'default') return fromRoom;
+    const publication = room?.localParticipant.getTrackPublication(source);
+    return publication?.track?.mediaStreamTrack.getSettings().deviceId ?? fromRoom;
+  }
+
+  async function refreshRoomDeviceLists(): Promise<void> {
+    if (!room) return;
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const camId = activeInputId('videoinput', Track.Source.Camera);
+    const micId = activeInputId('audioinput', Track.Source.Microphone);
+    renderSelect(el.selectCameraRoom, deviceOptions(devices, 'videoinput', camId, 'Kamera'));
+    renderSelect(el.selectMicRoom, deviceOptions(devices, 'audioinput', micId, 'Mikrofon'));
+
+    const offerSpeaker = offerSpeakerPicker(supportsAudioOutputSelection(), devices);
+    el.fieldSpeakerRoom.hidden = !offerSpeaker;
+    if (offerSpeaker) {
+      const outId =
+        room.getActiveDevice('audiooutput') ?? resolveActiveDevice(speakerId, devices, 'audiooutput');
+      renderSelect(el.selectSpeakerRoom, deviceOptions(devices, 'audiooutput', outId, 'Speaker'));
+    }
+  }
+
+  /**
+   * All three kinds go through Room.switchActiveDevice: it swaps the device inside
+   * the live publication (the track and its sid survive, so OBS never reloads),
+   * defers the swap when the track is muted, and for outputs re-sinks every remote
+   * audio element, current and future.
+   */
+  async function switchRoomDevice(kind: MediaDeviceKind, deviceId: string, label: string): Promise<void> {
+    if (!room) return;
+    el.devicesError.hidden = true;
+    try {
+      await room.switchActiveDevice(kind, deviceId);
+      if (kind === 'audiooutput') speakerId = deviceId;
+    } catch (error) {
+      el.devicesError.hidden = false;
+      el.devicesError.textContent = `Tidak bisa pindah ${label}: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+      // Re-read reality so the picker does not claim a device that never took over.
+      void refreshRoomDeviceLists();
+    }
+  }
+
   // ---------- wiring ----------
 
   el.btnPermission.addEventListener('click', () => void requestMedia());
@@ -477,9 +563,43 @@ export function startJoinPage(): void {
   el.btnJoin.addEventListener('click', () => void join());
   el.selectCamera.addEventListener('change', () => void switchCamera(el.selectCamera.value));
   el.selectMic.addEventListener('change', () => void switchMic(el.selectMic.value));
+  el.selectSpeaker.addEventListener('change', () => {
+    speakerId = el.selectSpeaker.value;
+  });
   el.btnMic.addEventListener('click', () => void toggleMic());
   el.btnCam.addEventListener('click', () => void toggleCam());
+  el.btnDevices.addEventListener('click', () => toggleDevicesPop());
   el.btnLeave.addEventListener('click', () => void leave());
+  el.selectCameraRoom.addEventListener('change', () =>
+    void switchRoomDevice('videoinput', el.selectCameraRoom.value, 'kamera'),
+  );
+  el.selectMicRoom.addEventListener('change', () =>
+    void switchRoomDevice('audioinput', el.selectMicRoom.value, 'mikrofon'),
+  );
+  el.selectSpeakerRoom.addEventListener('change', () =>
+    void switchRoomDevice('audiooutput', el.selectSpeakerRoom.value, 'speaker'),
+  );
+
+  // Click-away closes the popover; clicks inside it or on its button do not.
+  document.addEventListener('click', (event) => {
+    if (el.devicesPop.hidden) return;
+    const target = event.target as Node;
+    if (!el.devicesPop.contains(target) && !el.btnDevices.contains(target)) {
+      closeDevicesPop();
+    }
+  });
+
+  // Hot-plug is the normal case: a guest plugs in their headset after the page
+  // loaded. Refresh whichever pickers are on screen. In-room, livekit-client has
+  // its own devicechange handling (it even falls back to the first output when the
+  // active speaker vanishes); this listener only keeps the visible lists truthful.
+  navigator.mediaDevices.addEventListener?.('devicechange', () => {
+    if (room) {
+      if (!el.devicesPop.hidden) void refreshRoomDeviceLists();
+    } else if (!el.panels.ready.hidden) {
+      void populateDeviceLists();
+    }
+  });
 
   // Guests close the tab rather than pressing Keluar. Leaving cleanly means the
   // others' grids drop the tile immediately instead of after a timeout.
@@ -515,6 +635,8 @@ function collectElements() {
     inputName: need<HTMLInputElement>('input-name'),
     selectCamera: need<HTMLSelectElement>('select-camera'),
     selectMic: need<HTMLSelectElement>('select-mic'),
+    selectSpeaker: need<HTMLSelectElement>('select-speaker'),
+    fieldSpeaker: need<HTMLElement>('field-speaker'),
     meterFill: need<HTMLElement>('meter-fill'),
     joinError: need<HTMLElement>('join-error'),
     fatalTitle: need<HTMLElement>('fatal-title'),
@@ -528,6 +650,13 @@ function collectElements() {
     btnCam: need<HTMLButtonElement>('btn-cam'),
     btnCamLabel: need<HTMLElement>('btn-cam-label'),
     btnLeave: need<HTMLButtonElement>('btn-leave'),
+    btnDevices: need<HTMLButtonElement>('btn-devices'),
+    devicesPop: need<HTMLElement>('devices-pop'),
+    devicesError: need<HTMLElement>('devices-error'),
+    selectCameraRoom: need<HTMLSelectElement>('select-camera-room'),
+    selectMicRoom: need<HTMLSelectElement>('select-mic-room'),
+    selectSpeakerRoom: need<HTMLSelectElement>('select-speaker-room'),
+    fieldSpeakerRoom: need<HTMLElement>('field-speaker-room'),
     grid: need<HTMLElement>('grid'),
     roomStatus: need<HTMLElement>('room-status'),
     panels: {

@@ -84,6 +84,11 @@ import '../styles/join.css';
                 <label for="select-mic">Mikrofon</label>
                 <select id="select-mic"></select>
               </div>
+              <!-- Hidden until the browser proves it can actually switch outputs. -->
+              <div class="field field-wide" id="field-speaker" hidden>
+                <label for="select-speaker">Speaker</label>
+                <select id="select-speaker"></select>
+              </div>
             </div>
             <div class="meter"><div class="meter-fill" id="meter-fill"></div></div>
             <p class="hint">Coba bicara sebentar. Batang hijau di atas harus bergerak.</p>
@@ -115,6 +120,23 @@ import '../styles/join.css';
       <div class="grid" id="grid"></div>
 
       <footer class="room-foot">
+        <!-- Device pickers live in a popover so the footer stays a conversation
+             surface: one button, three selects only while the guest needs them. -->
+        <div class="devices-pop" id="devices-pop" hidden>
+          <div class="field">
+            <label for="select-camera-room">Kamera</label>
+            <select id="select-camera-room"></select>
+          </div>
+          <div class="field">
+            <label for="select-mic-room">Mikrofon</label>
+            <select id="select-mic-room"></select>
+          </div>
+          <div class="field" id="field-speaker-room" hidden>
+            <label for="select-speaker-room">Speaker</label>
+            <select id="select-speaker-room"></select>
+          </div>
+          <div class="alert" id="devices-error" hidden></div>
+        </div>
         <button class="ctrl" id="btn-mic" type="button" data-off="false">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
             <rect x="9" y="2" width="6" height="11" rx="3" />
@@ -128,6 +150,13 @@ import '../styles/join.css';
             <path d="M15 10.5 22 7v10l-7-3.5z" />
           </svg>
           <span id="btn-cam-label">Kamera aktif</span>
+        </button>
+        <button class="ctrl" id="btn-devices" type="button" data-active="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.98 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.65 8.98a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.01A1.7 1.7 0 0 0 10.05 3.1V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.01a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1.05z" />
+          </svg>
+          <span>Perangkat</span>
         </button>
         <button class="ctrl ctrl-leave" id="btn-leave" type="button">Keluar</button>
       </footer>

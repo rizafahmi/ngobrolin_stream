@@ -22,6 +22,9 @@ Any change to slugging is a breaking change to every OBS scene the captain has s
 - **LiveKit ships no macOS binaries** and its install script is Linux only. Build from source with the `/cmd/server` suffix; the bare module path fails with "build constraints exclude all Go files". See README.
 - **Chrome withholds usable ICE candidates from pages that never call `getUserMedia`.** The OBS view page is one, so local browser testing of `/view` needs `--use-fake-device-for-media-stream --use-fake-ui-for-media-stream`. Without it the page connects and is dropped seconds later with all ICE pairs failed. This is a local-testing artifact only.
 - **Astro dev HMR kicks connected guests back to the join screen** when any source file changes. Verify live sessions against `npm run build && npx astro preview`.
+- **In-room device switching must go through `Room.switchActiveDevice`**, never hand-rolled track replacement.
+  It swaps the device inside the live publication (the track sid survives, so OBS browser sources never reload), defers a microphone swap while the track is muted, and re-sinks every remote audio element including tiles created later.
+  Beware: `Room.getActiveDevice` returns a placeholder `'default'` for every kind before any switch has happened, which for cameras is not a real Chrome device id; see `activeInputId` in `src/scripts/join.ts`.
 - **Create local tracks with one `createLocalTracks` call.** Calling `createLocalVideoTrack` and `createLocalAudioTrack` concurrently never settles.
 - Each OBS source needs its own identity (`obs-<slug>`). LiveKit evicts the older session on duplicate identity, so a shared viewer token would leave only the last browser source alive.
 

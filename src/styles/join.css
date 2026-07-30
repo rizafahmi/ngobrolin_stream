@@ -132,10 +132,11 @@ button {
 /* Fixed floor under the panel keeps the two common states the same height, so the
    card does not resize under the pointer when permission is granted. */
 .panel {
-  /* Tallest state (panel-ready) measured in Chrome at 271px. Pinning the floor here
-     means switching states never resizes the card, so nothing moves under the
-     guest's pointer when permission is granted or an error appears. */
-  min-height: 272px;
+  /* Tallest state (panel-ready with the speaker row visible) measured in Chrome at
+     361px including this padding. Pinning the floor here means switching states
+     never resizes the card, so nothing moves under the guest's pointer when
+     permission is granted or an error appears. */
+  min-height: 361px;
   padding-top: 20px;
   display: flex;
   flex-direction: column;
@@ -232,6 +233,12 @@ button {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
+}
+
+/* The speaker picker gets a full-width row: a lone half-width select under the
+   camera column reads as a mistake. */
+.field-wide {
+  grid-column: 1 / -1;
 }
 
 /* ---------- Mic level ---------- */
@@ -430,6 +437,7 @@ button {
 }
 
 .room-foot {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -437,6 +445,25 @@ button {
   padding: 14px 20px;
   border-top: 1px solid var(--line);
   flex: none;
+}
+
+/* ---------- Device popover ---------- */
+
+.devices-pop {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 320px;
+  padding: 16px 16px 2px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.devices-pop .alert {
+  margin: 0 0 14px;
 }
 
 .ctrl {
@@ -463,6 +490,11 @@ button {
 .ctrl[data-off='true'] {
   border-color: var(--danger);
   color: #ffb4b6;
+}
+
+.ctrl[data-active='true'] {
+  background: var(--surface-raised);
+  border-color: var(--accent);
 }
 
 .ctrl svg {

@@ -278,7 +278,14 @@ Verified end to end, locally, against a real LiveKit server and real WebRTC medi
 - OBS connections staying invisible to guests, so nobody sees a ghost tile.
 - The OBS page containing no accessible content at all beyond the video element.
 - The join page's permission, denied, no-device, ready, and broken-link states, all rendering at identical card geometry so nothing shifts under the pointer.
-- 82 unit tests over identity, token minting, URL shapes, CLI parsing, quality policy, grid layout, and error classification.
+- The speaker picker on the join card: a non-default output chosen before joining reached the `sinkId` of a remote tile created after joining.
+- In-room device switching through the **Perangkat** popover, against a real LiveKit server with Chrome's fake device set (three cameras, three mics, three outputs):
+  - Camera switch mid-room kept the same publication (`trackSid` unchanged), the OBS view page kept playing 1280x720 with the same `MediaStreamTrack` and never reloaded, and the other guest's grid tile kept playing.
+  - Mic switch while muted stayed muted, and the swap applied on unmute with echo cancellation, noise suppression, and auto gain all still active on the new device.
+  - Speaker switch in-room re-sank the existing remote tiles, and a third guest joining afterwards got a tile playing through the switched output.
+  - A `devicechange` event repopulated the pickers on both the join card and the open popover.
+- What was *not* observed there: a physical hot-plug (the `devicechange` event was dispatched synthetically over static fake devices), and the hidden-picker path on a browser without `setSinkId` (the gate is `offerSpeakerPicker` in `src/lib/devices.ts`, unit tested, but no such browser was run).
+- 101 unit tests over identity, token minting, URL shapes, CLI parsing, quality policy, grid layout, device picker decisions, and error classification.
 
 Not verified, and not claimed to work:
 
