@@ -94,7 +94,12 @@ describe('screen share encoding policy', () => {
   it('stops the shared audio coming out of the sharer’s own speakers', () => {
     // The one feedback path the site can close by itself: the sharer's speakers into
     // the sharer's microphone. Everything else is a headphone question.
-    expect(PUBLISH_SCREEN_PRESET.suppressLocalAudioPlayback).toBe(true);
+    //
+    // It lives in the capture constraints, not beside the video policy, because
+    // livekit-client accepts a top-level `suppressLocalAudioPlayback` and then never
+    // forwards it to getDisplayMedia. Asserting the working location is the point.
+    expect(PUBLISH_SCREEN_AUDIO_PRESET.capture.suppressLocalAudioPlayback).toBe(true);
+    expect(PUBLISH_SCREEN_PRESET).not.toHaveProperty('suppressLocalAudioPlayback');
   });
 
   it('does not touch the camera policy', () => {

@@ -110,9 +110,8 @@ export const AUDIO_CAPTURE_CONSTRAINTS = {
  * already defaults a screen-share track's `degradationPreference` to
  * `maintain-resolution`, which is the same instinct, so that is left alone.
  *
- * `suppressLocalAudioPlayback` stops a shared tab's audio coming out of the sharer's
- * own speakers. That is the one feedback path this site can close by itself: without
- * it the sharer's microphone re-captures the clip and the captain gets it twice.
+ * The feedback mitigation lives in {@link PUBLISH_SCREEN_AUDIO_PRESET} rather than
+ * here, for a reason worth knowing: see the note on `suppressLocalAudioPlayback`.
  */
 export const PUBLISH_SCREEN_PRESET = {
   top: ScreenSharePresets.h1080fps15,
@@ -120,7 +119,6 @@ export const PUBLISH_SCREEN_PRESET = {
   resolution: ScreenSharePresets.h1080fps15.resolution,
   contentHint: 'detail',
   simulcast: true,
-  suppressLocalAudioPlayback: true,
 } as const;
 
 /** Height in pixels of each layer a shared screen is published in. Low first. */
@@ -145,6 +143,21 @@ export const SCREEN_SIMULCAST_LAYER_HEIGHTS = [
  * The browser's three voice processors are all off, though, where the microphone has
  * all three on. Noise suppression and auto gain are trained on speech and audibly
  * mangle music, and there is no echo to cancel: this audio never went through a room.
+ *
+ * `suppressLocalAudioPlayback` is the feedback mitigation, and it belongs in these
+ * capture constraints rather than alongside the video policy. livekit-client accepts a
+ * top-level `suppressLocalAudioPlayback` in its screen-capture options and then does
+ * not forward it to `getDisplayMedia` (see `screenCaptureToDisplayMediaStreamOptions`
+ * in the client), so setting it there looks right and does nothing. It is a
+ * constrainable property of the captured audio track, so the constraints are where it
+ * actually reaches the browser.
+ *
+ * What it buys: a shared tab's audio stops coming out of the sharer's own speakers, so
+ * their microphone cannot re-capture the clip and hand the captain a second, delayed
+ * copy of it. That is the only feedback path this site can close by itself. The
+ * remaining one - a guest hearing the clip through their speakers - is the same
+ * headphones question the show already has for every other guest's voice, and every
+ * guest's microphone already runs with echo cancellation on.
  */
 export const PUBLISH_SCREEN_AUDIO_PRESET = {
   maxBitrate: PUBLISH_AUDIO_PRESET.maxBitrate,
@@ -154,6 +167,7 @@ export const PUBLISH_SCREEN_AUDIO_PRESET = {
     echoCancellation: false,
     noiseSuppression: false,
     autoGainControl: false,
+    suppressLocalAudioPlayback: true,
   },
 } as const;
 

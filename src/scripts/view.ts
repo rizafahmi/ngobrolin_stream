@@ -91,6 +91,33 @@ export function startViewPage(): void {
     debug(`subscribe ${publication.source} ${publication.trackSid}`);
   }
 
+  /**
+   * Re-assert the top-layer pin on whatever this page is already subscribed to.
+   *
+   * A guest publishing or unpublishing anything renegotiates their connection, and the
+   * layer this page is being sent does not reliably survive that. Measured locally with
+   * two guests: for about 10 to 15 seconds after a screen share ended, the *camera*
+   * source was fed the 360p layer - same track, never reloaded, just softer - before
+   * climbing back to 720p on its own.
+   *
+   * Calling this on both edges renews the request rather than leaving the last one to
+   * age. Be honest about what it buys: **it did not close that window**. The publisher's
+   * top layer dips in frame rate through the renegotiation, and the SFU's own layer
+   * choice is what recovers. This is kept because a standing preference should be
+   * re-asserted when the thing it applies to is renegotiated, and because it is one
+   * idempotent signal message per subscribed video publication - not because it is a fix.
+   */
+  function repin(): void {
+    const participant = room.remoteParticipants.get(targetIdentity);
+    if (!participant) return;
+    for (const publication of participant.trackPublications.values()) {
+      const remote = publication as RemoteTrackPublication;
+      if (!remote.isSubscribed || remote.kind !== Track.Kind.Video || !isMine(remote)) continue;
+      remote.setVideoQuality(quality);
+      remote.setVideoDimensions(dimensions);
+    }
+  }
+
   /** Subscribe to the target's tracks. Everybody else is simply left alone. */
   function adopt(participant: RemoteParticipant): void {
     if (participant.identity !== targetIdentity) return;
@@ -121,7 +148,9 @@ export function startViewPage(): void {
   room
     .on(RoomEvent.ParticipantConnected, (participant) => adopt(participant))
     .on(RoomEvent.TrackPublished, (publication, participant) => {
-      if (participant.identity === targetIdentity) take(publication);
+      if (participant.identity !== targetIdentity) return;
+      take(publication);
+      repin();
     })
     .on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
       // The subscription filter above already decided this, but a track can only be
@@ -133,12 +162,15 @@ export function startViewPage(): void {
       if (participant.identity === targetIdentity && isMine(publication)) track.detach();
     })
     .on(RoomEvent.TrackUnpublished, (publication, participant) => {
+      if (participant.identity !== targetIdentity) return;
       // A guest stopping their screen share unpublishes the track, from the footer
       // button or from Chrome's own stop-sharing bar. Either way this source goes
       // black, which is the correct state for a screen nobody is sharing.
-      if (participant.identity !== targetIdentity || !isMine(publication)) return;
-      if (publication.kind === Track.Kind.Video) video.srcObject = null;
-      debug(`unpublished ${publication.source}`);
+      if (isMine(publication)) {
+        if (publication.kind === Track.Kind.Video) video.srcObject = null;
+        debug(`unpublished ${publication.source}`);
+      }
+      repin();
     })
     .on(RoomEvent.ParticipantDisconnected, (participant) => {
       if (participant.identity !== targetIdentity) return;

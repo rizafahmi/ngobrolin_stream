@@ -11,6 +11,11 @@ Saved OBS scenes point at `/view?id=<slug>`, so **nothing may ever make that slu
 The display name a guest types is cosmetic and must stay that way.
 Any change to slugging is a breaking change to every OBS scene the captain has saved.
 
+The same protection extends to the view URL itself.
+A camera source is `/view?id=<slug>&t=<token>` with **no** `source` parameter, and that absence is load-bearing: it is what every scene saved before screen sharing existed relies on.
+New source kinds are added as new parameter values, never by changing what the existing URL means.
+`test/urls.test.ts` asserts the camera URL as a whole literal string for this reason.
+
 ## Sharp edges
 
 - **The media server is LiveKit Cloud's free Build plan**, not the self-hosted config. `livekit.yaml` and `podman-compose.yml` are the documented alternative, kept for the day the show outgrows the free allowance. See the Cloud and self-hosting sections of README.
@@ -27,10 +32,14 @@ Any change to slugging is a breaking change to every OBS scene the captain has s
   It swaps the device inside the live publication (the track sid survives, so OBS browser sources never reload), defers a microphone swap while the track is muted, and re-sinks every remote audio element including tiles created later.
   Beware: `Room.getActiveDevice` returns a placeholder `'default'` for every kind before any switch has happened, which for cameras is not a real Chrome device id; see `activeInputId` in `src/scripts/join.ts`.
 - **Create local tracks with one `createLocalTracks` call.** Calling `createLocalVideoTrack` and `createLocalAudioTrack` concurrently never settles.
+- **Every publication must be filtered by track source before it is rendered.** A guest publishes up to four tracks and each OBS page is exactly one of two sources, so "belongs to this participant" is not enough - that assumption was a live bug, where a screen share silently replaced the guest's face mid-broadcast. The rule is `viewAcceptsTrackSource` in `src/lib/view-source.ts`, it covers audio as well as video, and both sets are disjoint. Anything new that renders a remote track goes through it.
+- **livekit-client accepts `suppressLocalAudioPlayback` at the top level of its screen-capture options and never forwards it to `getDisplayMedia`** (see `screenCaptureToDisplayMediaStreamOptions` in the client). It has to go in the `audio` constraints instead, where it is a real constrainable property. Same shape of trap for anything else in `ScreenShareCaptureOptions`: check that mapping function before trusting a field exists in practice.
+- **A screen track reads `screenShareEncoding`, not `videoEncoding`.** `computeVideoEncodings` switches on the source, so a `videoEncoding` passed for a screen share is silently ignored. One entry in `screenShareSimulcastLayers` yields two layers in total.
+- **Publishing or unpublishing anything renegotiates the guest's connection, and OBS gets a softer layer for 10-15 seconds.** Measured after a screen share ends: the camera source is fed 360p, same track, never reloaded, then climbs back to 720p on its own. Re-asserting the subscription pin (`repin` in `src/scripts/view.ts`) does not close that window; do not "fix" it again without measuring first. README's verification section records the numbers.
 - **Muted must suppress every speaking cue**, whatever the library or an analyser reports. That rule lives in `micCue` (`src/lib/mic-cue.ts`) and every cue must go through it: a guest who believes they are heard while muted is the failure the cues exist to prevent. The OBS view page shows no cues at all, by the same rule that keeps it bare - everything on it goes on air.
 - **Cue painting is a per-frame job, tile structure is not.** `paintCues` in `src/scripts/join.ts` writes the speaking outline and the local level bar on every animation frame, and only when a value actually changed; `renderGrid` rebuilds tiles and must stay out of that loop, since re-attaching a track at frame rate flashes the video.
 - **One analyser per session, re-bound rather than restarted.** The join card's bar and the local tile's bar are the same measurement, and the analyser follows the microphone by noticing that `mediaStreamTrack` changed - which is what an in-room device switch and every unmute do.
-- Each OBS source needs its own identity (`obs-<slug>`). LiveKit evicts the older session on duplicate identity, so a shared viewer token would leave only the last browser source alive.
+- Each OBS source needs its own identity - `obs-<slug>` for the face, `obs-<slug>.screen` for the screen. LiveKit evicts the older session on duplicate identity, so a shared viewer token would leave only the last browser source alive, and that applies to a guest's two sources as much as to two guests. The separator is a dot because a slug is only `[a-z0-9-]`, so no dash-joined suffix can be proven collision-free.
 
 ## Conventions
 

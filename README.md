@@ -13,7 +13,7 @@ There are no accounts, no billing, and no multi-tenancy, and there never will be
 
 - **LiveKit** is the SFU, run on LiveKit Cloud's free Build plan. Every guest uploads exactly one stream to the server, no matter how many other people are in the room. A peer-to-peer mesh would make each guest upload one copy per participant, and the guests' connections are far worse than the captain's.
 - **The site is static, with no backend.** Guest tokens are long-lived and minted ahead of time by a CLI script, then embedded in permanent links. This is the same idea as vdo.ninja's `&push=ALICE`, and it is what lets the site deploy to any free static host.
-- **OBS consumes one browser source per guest**, so the captain keeps full per-person control of the layout.
+- **OBS consumes one browser source per thing**, so the captain keeps full control of the layout. That is one source per guest's face, plus one per guest's screen share. The site never composites; the scene does.
 - **Identities are frozen at minting time.** A guest's LiveKit identity is a slug of their name, stored inside their token. Nothing the guest types can change it, so a saved OBS scene keeps working week after week.
 
 ### Quality: OBS gets the good copy, guests get thumbnails
@@ -27,6 +27,26 @@ Verified locally: the same guest decodes at 1280x720 in the OBS page and 320x180
 
 Audio is 48 kbps mono Opus with RED on and DTX explicitly off.
 DTX clips the first syllable after a pause, which sounds like a dropout in a recording.
+
+### A screen is not a face
+
+A shared screen gets its own policy, because the numbers that suit a talking head are wrong for text.
+It is published at **1920x1080 and 15 fps, 2.5 Mbps**, with a **640x360 at 400 kbps** second layer, both taken from LiveKit's own `ScreenSharePresets` rather than invented.
+More pixels and fewer frames: a slide or an editor changes a few times a minute, and 1080p is what keeps small text readable after OBS scales it.
+The track also carries `contentHint: 'detail'`, so the encoder keeps edges sharp instead of smearing them the way it would for motion.
+
+**Two layers, not the camera's three.**
+A screen has exactly two consumers, at opposite ends of the ladder: the OBS source takes 1080p, the in-room grid takes 640x360.
+A middle layer would be encoded for nobody and would take its bitrate from the layer that goes on air.
+Simulcast itself stays on, though - without it every guest's grid would have to pull the same 2.5 Mbps copy OBS takes, which is what would turn a screen share into a bandwidth problem.
+See "What a screen share costs" below.
+
+**Screen-share audio is captured**, and it reaches the screen source, never the camera one.
+Playing a clip on air is a real part of the show, and routing it through the site gives the captain a clean digital copy rather than whatever the sharer's microphone picked up off their speakers.
+It is encoded exactly like a microphone (48 kbps mono Opus, RED on, DTX off), but with the browser's three voice processors off: noise suppression and auto gain are trained on speech and audibly mangle music, and there is no room echo to cancel.
+The feedback risk is handled where it can be: `suppressLocalAudioPlayback` stops a shared tab's audio coming out of the sharer's own speakers, so their microphone cannot hand the captain a second, delayed copy of the clip.
+The remaining path - another guest hearing the clip through their speakers - is the same headphones question the show already has for every guest's voice, and every guest's microphone already runs with echo cancellation on.
+The grid does play the screen audio, so guests can hear what they are reacting to; a guest discussing a clip they cannot hear is the worse failure.
 
 ## Prerequisites
 
@@ -99,21 +119,25 @@ Run this once per guest, ever:
 npm run mint -- "Budi Santoso" "Sari Dewi" "Andre Wibowo" --base https://ngobrolin.example.com
 ```
 
-For each name it prints two links:
+For each name it prints three links:
 
 - **The guest link**, `https://.../?t=<token>`. Send this to the guest. They keep it forever.
-- **The OBS browser source URL**, `https://.../view?id=budi-santoso&t=<token>`. This goes into OBS.
+- **The OBS browser source URL**, `https://.../view?id=budi-santoso&t=<token>`. This is their face. It goes into OBS.
+- **The OBS browser source URL for their screen**, `https://.../view?id=budi-santoso&source=screen&t=<token>`. This is a *second, separate* browser source, never a substitute for the first.
 
 Tokens last five years by default.
 Use `--ttl-days` to change that.
 
 Re-running `mint` for the same name produces a **new token but the same identity**.
 That means a saved OBS scene keeps working: only the `t=` part of the URL needs replacing, and the `id=` part never changes.
+The camera URL is also unchanged by the arrival of screen sharing, byte for byte: the absence of `source=` is what means "camera", so every source saved before this feature existed keeps working untouched.
 
-The two tokens are deliberately different.
+The tokens are deliberately different.
 The guest token can publish and subscribe.
-The OBS token can only subscribe, so if that link ever leaks, the worst case is somebody watching, not somebody appearing on the show.
-Each OBS source also gets its own identity (`obs-budi-santoso`), because LiveKit disconnects the older session when a duplicate identity connects, and one shared viewer token across four browser sources would leave only the last one alive.
+An OBS token can only subscribe, so if that link ever leaks, the worst case is somebody watching, not somebody appearing on the show.
+Each OBS source also gets its own identity, because LiveKit disconnects the older session when a duplicate identity connects, and one shared viewer token across several browser sources would leave only the last one alive.
+That applies to a guest's two sources as much as to two guests, so the identities are `obs-budi-santoso` and `obs-budi-santoso.screen`.
+The dot is not decoration: a slug only ever contains `[a-z0-9-]`, so a dash-joined `obs-budi-santoso-screen` would be ambiguous with the camera source of a guest called "Budi Santoso Screen", and a dot cannot collide with anything.
 
 Guest links contain a working credential.
 Treat them like passwords and send them privately.
@@ -130,12 +154,27 @@ For each guest, once:
 6. Untick **Shutdown source when not visible**. Leaving it ticked makes the guest's feed reconnect on every scene change, which costs a few seconds of black.
 7. Leave **Refresh browser when scene becomes active** off unless you specifically want a hard reset on every switch.
 
-The page renders nothing but the video: no names, no borders, no controls, no spinners.
+The page renders nothing but the video: no names, no borders, no controls, no spinners, no speaking cues.
 When something is wrong it stays black, which is the right failure mode mid-recording.
 Append `&debug=1` while setting up to get a small diagnostic overlay; never leave it on for a show.
 
 Once the sources exist, the scene is permanent.
 The same URLs keep working next week.
+
+### Adding a guest's screen source
+
+Do this only for the guests who actually share - usually just the host.
+An idle screen source costs no bandwidth, but it does spend participant-minutes for the whole recording; see the meters below.
+
+1. **Sources** -> **+** -> **Browser**, as above.
+2. Paste that guest's `view?id=...&source=screen&...` URL - the third link `mint` prints, not the second.
+3. Set **Width** 1920, **Height** 1080. The screen is published at 1080p, and this source is the one place that resolution is worth having.
+4. Tick **Control audio via OBS**, so a clip played on the shared screen reaches the mix.
+5. Untick **Shutdown source when not visible**, same as the camera sources.
+
+The screen source is **black whenever nobody is sharing**, which is its correct resting state rather than a fault.
+It letterboxes rather than crops, because a guest's display is rarely the same shape as the source and the edge of a shared window is usually the thing being pointed at.
+Compose the face and the screen in the scene however the show wants them; the site deliberately does not decide that.
 
 ## Running a show
 
@@ -149,6 +188,11 @@ The same URLs keep working next week.
    A muted guest never gets either cue, whatever the server reports, because the one mistake worth designing against is somebody believing they are heard while muted.
    If the browser refuses to start audio playback, a separate line appears above the grid saying so and offering to fix it on click; that is a different message from nobody talking, and it never appears when there is nothing to hear.
 7. Watch each OBS source come alive as its guest joins.
+8. A guest who needs to show something presses **Bagikan layar** in the footer and picks a tab, a window, or their whole screen.
+   Their screen appears as an extra cell in everybody's grid, next to their face, and in the captain's separate screen browser source at full resolution.
+   Their face source is untouched throughout.
+   Pressing the button again stops the share, and so does Chrome's own **Stop sharing** bar - both return everything to normal, and the footer button follows either way.
+   A guest who changes their mind and closes the picker sees nothing happen, which is correct; a real failure gets a line above the grid.
 
 **Why step 1 exists, and the risk it accepts.**
 A measured two-hour show uses about 8.0 GB downstream and 720 participant-minutes.
@@ -162,6 +206,49 @@ The pre-show check is the whole mitigation: it is cheap, and it is the only mome
 
 If a guest's connection drops and they rejoin, their OBS source recovers on its own.
 Verified locally: a guest fully disconnected, closed the page, reopened their link, and changed their display name, and the OBS browser source, never reloaded, picked the feed back up at 1280x720.
+
+### What a screen share costs
+
+This is the part worth reading before turning screen sharing loose, because it is the one feature that can push a normal month past the free allowance.
+
+The arithmetic below is the same method as the 8.0 GB figure above - nominal `maxBitrate` per subscribed leg, times duration - and it reproduces that figure exactly, which is why it is trusted here.
+A screen share adds two kinds of leg: one 1080p copy to the captain's screen browser source, and one 640x360 copy to each *other* guest's grid.
+The sharer does not download their own screen.
+With three guests, one sharing:
+
+| | rate added | per hour of sharing |
+| --- | --- | --- |
+| Screen source to OBS (1080p15 + audio) | 2.55 Mbps | 1.15 GB |
+| Two other guests' grid cells (360p + audio) | 0.90 Mbps | 0.40 GB |
+| **Total** | **3.44 Mbps** | **1.55 GB** |
+
+Against the 50 GB monthly cap, for a four-show month of two-hour episodes:
+
+| Sharing per episode | Episode | Four shows | Of the 50 GB cap |
+| --- | --- | --- | --- |
+| none | 8.00 GB | 32.0 GB | 64% |
+| 30 minutes | 8.78 GB | 35.1 GB | 70% |
+| one hour | 9.55 GB | 38.2 GB | 76% |
+| the full two hours | 11.10 GB | 44.4 GB | **89%** |
+| the full two hours, two guests sharing at once | 14.20 GB | 56.8 GB | **114% - over the cap** |
+
+**Read the bold rows as the warning they are.**
+A four-show month where every episode carries a full two-hour single screen share fits, at 89%, with no headroom left to discover anything with.
+A four-show month where two guests share for the full two hours **does not fit**: it needs about 57 GB against a 50 GB allowance, and the overage lands as new connections failing partway through the last recording of the month.
+Occasional sharing - a clip, a slide, twenty minutes of code - is comfortable.
+A format built around a permanently shared screen is a reason to move to the paid tier before the month starts, not a reason to ration it mid-show.
+
+**Participant-minutes move too, even when nobody shares.**
+Each screen browser source is another participant for the whole recording:
+
+| Sources in the scene | Per show | Four shows | Of the 5,000-minute cap |
+| --- | --- | --- | --- |
+| three camera sources | 720 min | 2,880 | 58% |
+| plus one screen source | 840 min | 3,360 | 67% |
+| plus three screen sources | 1,080 min | 4,320 | 86% |
+
+So add screen sources only for the guests who actually use them.
+An idle screen source subscribes to nothing and so costs no bandwidth at all, but three of them still move the minutes meter from 58% to 86% for a month in which nobody ever shared anything.
 
 ## TURN: what to do when one guest can never join
 
@@ -319,8 +406,24 @@ Verified end to end, locally, against a real LiveKit server and real WebRTC medi
   - Turning the camera off kept the avatar placeholder behaviour intact, with the outline and level bar still correct over the placeholder.
   - The level bar followed the microphone across a track swap: replacing the live `MediaStreamTrack` inside the publication re-bound the analyser with no restart, which is the same path an in-room mic switch and every unmute take.
 - The blocked-audio notice, **partly**: with `Room.canPlaybackAudio` driven to `false`, the notice appeared with its own wording, and a real keyboard activation of it called `Room.startAudio()` exactly once and cleared the notice while remote audio kept playing.
+- **Screen sharing**, with two guests, a real `getDisplayMedia` capture, and both of one guest's OBS sources open at once. 55 checks, all passing, driven over CDP against a real LiveKit server.
+  Read one caveat first, because it bounds everything below: the capture was a genuine `getDisplayMedia` call that Chrome resolved with `displaySurface: monitor` at 3840x2160, but **its frames were Chrome's synthetic test pattern rather than the actual desktop**, because `--use-fake-device-for-media-stream` substitutes the frame source for display capture as well as for the camera. The call, the track, the encoding, the publication, the subscription, and the delivery are all real; the pixels are not a real screen. Screenshots of the rendered OBS source and the guests' grids confirm the pattern being carried end to end.
+  - **The bug this feature was built around is gone.** While the guest shared, their camera OBS source kept rendering the *same camera track* - identical `MediaStreamTrack.id` before, during, and after - and never subscribed to the screen share at all. Its subscription set stayed exactly `camera, microphone` while the guest's publication set grew to `camera, microphone, screen_share, screen_share_audio`.
+  - The screen OBS source rendered the shared screen at **1920x1080**, subscribed only to `screen_share` and `screen_share_audio`, and was black with zero subscriptions before anyone shared.
+  - The two OBS sources coexisted, connected as `obs-budi-santoso` and `obs-budi-santoso.screen`, neither evicting the other.
+  - Both OBS pages had **no accessible content whatsoever** - empty `innerText` - before, during, and after the share. A screenshot of the rendered screen source at 1920x1080 shows the shared frame full-bleed with nothing else on it at all.
+  - The camera page computes `object-fit: cover` and the screen page computes `contain`. The capture happened to be 16:9, the same shape as the source, so **no letterbox bar was ever actually drawn**; only the computed style was checked.
+  - The negotiated RTP encodings were exactly two: `q` at 400 kbps / 15 fps / one-third scale and `h` at 2.5 Mbps / 15 fps / full scale. Capture ran at 1920x1080 at 15 fps, `contentHint` was `detail`, and `degradationPreference` was `maintain-resolution`.
+  - The other guest's grid gained a third cell keyed `budi-santoso.screen`, ordered immediately after that guest's face, labelled "Layar Budi Santoso", letterboxed, and **decoding 640x360** - the low layer - while that same guest's face cell decoded 320x180 at the same moment. The grid did not scroll in either axis.
+  - The screen cell carried the screen-share audio track, and carried no speaking outline, no level bar, and no muted badge.
+  - The sharer saw **no cell for their own screen**, which is deliberate: sharing a whole display would otherwise nest the window inside itself.
+  - Stopping from the footer button, and stopping the way Chrome's own bar does (ending the underlying capture, which is the exact code path), both unpublished every screen track, blanked the screen OBS source, removed the grid cell, and reset the footer button to "Bagikan layar". Sharing again afterwards worked.
+  - Screen-share **audio was captured and published** as `screen_share_audio`, reached the screen OBS source's audio element, and reached the other guest's screen cell as a live track. Same caveat as the video: the audio came from Chrome's fake capture, not real system audio.
+  - The footer button and the grid were checked visually as well as programmatically: the sharer's button reads "Layar dibagikan" with the same accent border the **Perangkat** button uses when open, the footer does not change width between the two labels, and the other guest sees three evenly sized cells reading "Budi Santoso", "Layar Budi Santoso", "Sari Dewi (kamu)" in that order.
+  - Nothing already verified regressed: camera off still blanked the camera OBS source and coming back on still returned 1280x720, the muted badge still appeared with the speaking outline suppressed, and the device popover still opened and listed devices.
+- **What was observed and is not ideal**, stated because it is what the captain will see: for about **10 to 15 seconds after a screen share ends**, the camera OBS source is fed the 360p simulcast layer instead of 720p. The track is never replaced and the source never reloads - it is the same feed, briefly softer - and it climbs back to 1280x720 on its own, measured at 15 seconds in two separate runs. The cause is the publisher's top layer dipping in frame rate through the unpublish renegotiation, so the SFU steps subscribers down and back up. Re-asserting the page's layer request on both edges was tried and **did not close the window**; the code says so where it lives. Starting a share did not produce the same dip in the runs that were measured for it.
 - The Wrangler configuration, by `npx wrangler deploy --dry-run` after a real `npm run build`: Wrangler 4.115.0 read the 8 files in `dist/`, reported no bindings, and exited - with no framework detection, no `Detected Project Settings` prompt, and no attempt to run `astro add cloudflare`. No credentials were involved.
-- 135 tests (`npm test`) over identity, token minting, URL shapes, CLI parsing, quality policy, grid layout, device picker decisions, error classification, and the microphone cue and blocked-audio rules, plus real-build checks that the build refuses a missing `PUBLIC_LIVEKIT_URL` and that minting refuses a `dist/` built against a different address, and that `npm run deploy` stops at a failing build before Wrangler ever runs.
+- 183 tests (`npm test`) over identity, token minting, URL shapes, CLI parsing, quality policy, grid layout, device picker decisions, error classification, and the microphone cue and blocked-audio rules, plus real-build checks that the build refuses a missing `PUBLIC_LIVEKIT_URL` and that minting refuses a `dist/` built against a different address, and that `npm run deploy` stops at a failing build before Wrangler ever runs. The screen-share additions include the track-source filtering rule that keeps a screen out of a camera source, that the camera view URL is unchanged byte for byte, the screen encoding policy, and a real `scripts/mint.ts` run asserting it prints three URLs in the right shapes.
 
 Not verified, and not claimed to work:
 
@@ -332,6 +435,13 @@ Not verified, and not claimed to work:
 - **Browsers other than Chrome.** The guests are all on desktop Chrome, so that is the only target, and there is no mobile layout. Testing used Chrome Canary, the only Chrome installed on this machine.
 - **Sustained multi-hour recording**, thermal behaviour, or memory growth over a real show's length.
 - **A genuinely browser-blocked audio playback.** Chrome would not block it: once a page has been granted microphone permission Chrome treats it as allowed to autoplay, and neither `--autoplay-policy=document-user-activation-required` nor `user-gesture-required` produced a blocked state on a page that had joined the room. The notice's decision rule is unit tested and its wiring was verified against a driven `canPlaybackAudio`, but the browser condition that triggers it in the wild was never actually reproduced.
+- **A screen share carrying real screen pixels.** See the caveat at the top of the screen-sharing entry above. Everything about the plumbing was exercised; the content was Chrome's test pattern. Whether a real 1080p desktop at 2.5 Mbps is legible enough on air is a judgement about the encoding policy, not something these runs measured.
+- **Screen sharing a browser tab or a single window**, as opposed to a whole display. Chrome's `--auto-select-desktop-capture-source` selects the display. Tab and window capture use the same `getDisplayMedia` call and the same publication path, but were not driven.
+- **`suppressLocalAudioPlayback`.** Its effect only exists for a tab capture, so it was never observed doing anything. It is set as a track constraint, which is the only place livekit-client actually forwards it - see the note in `src/lib/quality.ts`, which is the observation that matters - but that Chrome then honours it is reasoning.
+- **Whether screen-share audio actually carries a clip audibly.** An audio track was captured, published, subscribed, and attached to real elements in both the OBS screen source and the other guest's grid cell, all verified. Nobody listened to it, and no clip was played into it.
+- **Whether the grid playing screen audio causes audible feedback in practice.** The decision to play it, and the reasoning behind it, are above; the failure mode it accepts was never provoked.
+- **Two guests sharing screens simultaneously.** The bandwidth table above includes that case arithmetically; it was never run.
+- **A screen share over a real network.** Every leg above was loopback on one laptop, where 3.4 Mbps of extra downstream costs nothing. Whether a guest's uplink can carry 2.9 Mbps of screen on top of 2.5 Mbps of camera is exactly the kind of thing a single machine cannot answer.
 - **Speaking cues driven by a real human voice.** Chrome's fake microphone beeps for only about 16% of each second, which is below LiveKit's default speaker threshold, and `--use-file-for-fake-audio-capture` produced silence in Chrome Canary here. The verification above therefore fed continuous synthetic audio into the live publication and ran the local server with a more sensitive `audio:` block (`active_level: 45`, `min_percentile: 5`, `update_interval: 200`). Real speech clears LiveKit's defaults comfortably, but that is reasoning, not an observation.
 
 ## Layout of the code
@@ -341,15 +451,16 @@ src/lib/            Pure logic, all unit-tested
   identity.ts         Name -> stable slug, room name, OBS identities
   token.ts            Token minting (Node only, imports the server SDK)
   jwt.ts              Browser-side token decoding, kept apart from token.ts
-  urls.ts             Join and view link shapes
-  quality.ts          Simulcast and subscription policy
+  urls.ts             Join and view link shapes, camera and screen
+  view-source.ts      Which tracks belong to which OBS source, and the URL parameter
+  quality.ts          Simulcast and subscription policy, camera and screen
   layout.ts           Grid columns, tile sizing, tile order
   media-errors.ts     getUserMedia and join failures -> Indonesian guidance
   mic-cue.ts          Speaking outline and level bar, with muted suppressing both
   audio-playback.ts   When to show the "browser blocked the audio" notice
   connection-status.ts
   cli-args.ts         Argument parsing for the mint CLI
-src/pages/          index.astro (join + room), view.astro (OBS source)
+src/pages/          index.astro (join + room), view.astro (both OBS sources)
 src/scripts/        Browser controllers for those two pages
 scripts/mint.ts     The link-minting CLI
 wrangler.jsonc      Cloudflare deploy config: dist/ as static assets, no Worker code

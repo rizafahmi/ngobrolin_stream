@@ -737,12 +737,11 @@ export function startJoinPage(): void {
           resolution: PUBLISH_SCREEN_PRESET.resolution,
           contentHint: PUBLISH_SCREEN_PRESET.contentHint,
           // Capturing the shared audio is a deliberate yes: playing a clip on air is
-          // part of the show. The browser's three voice processors stay off - see
-          // PUBLISH_SCREEN_AUDIO_PRESET - and suppressLocalAudioPlayback keeps that
-          // audio out of the sharer's own speakers, which is the one feedback path
-          // this page can close by itself.
+          // part of the show. The browser's three voice processors stay off and
+          // suppressLocalAudioPlayback keeps that audio out of the sharer's own
+          // speakers - both live in PUBLISH_SCREEN_AUDIO_PRESET.capture, and the note
+          // there explains why the latter must be a constraint rather than an option.
           audio: { ...PUBLISH_SCREEN_AUDIO_PRESET.capture },
-          suppressLocalAudioPlayback: PUBLISH_SCREEN_PRESET.suppressLocalAudioPlayback,
           // Offer the guest every source Chrome can give: a tab, a window, a whole
           // display, the system-audio checkbox, and the ability to switch what they are
           // sharing without stopping and starting again.
