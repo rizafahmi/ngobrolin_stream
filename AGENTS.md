@@ -14,14 +14,15 @@ Any change to slugging is a breaking change to every OBS scene the captain has s
 ## Sharp edges
 
 - **The media server is LiveKit Cloud's free Build plan**, not the self-hosted config. `livekit.yaml` and `podman-compose.yml` are the documented alternative, kept for the day the show outgrows the free allowance. See the Cloud and self-hosting sections of README.
-- **`PUBLIC_LIVEKIT_URL` is baked in at build time.** Changing the media server means `npm run build` plus a redeploy, and changing credentials means re-minting every guest link. Identities are unaffected, so saved OBS scenes survive both.
+- **`PUBLIC_` variables are frozen into the bundle at build time**, so creating or editing `.env` changes nothing until you rebuild.
+  The build now throws instead of shipping a bundle with no server address; see the gate at the top of `astro.config.mjs`.
+  Changing the media server therefore means `npm run build` plus a redeploy, and changing credentials means re-minting every guest link.
+  Identities are unaffected, so saved OBS scenes survive both.
 - **`token.ts` must not be imported by browser code.** It pulls in `livekit-server-sdk` and `node:crypto`. Browser-side token reading lives in `src/lib/jwt.ts` for exactly this reason.
 - **LiveKit ships no macOS binaries** and its install script is Linux only. Build from source with the `/cmd/server` suffix; the bare module path fails with "build constraints exclude all Go files". See README.
 - **Chrome withholds usable ICE candidates from pages that never call `getUserMedia`.** The OBS view page is one, so local browser testing of `/view` needs `--use-fake-device-for-media-stream --use-fake-ui-for-media-stream`. Without it the page connects and is dropped seconds later with all ICE pairs failed. This is a local-testing artifact only.
 - **Astro dev HMR kicks connected guests back to the join screen** when any source file changes. Verify live sessions against `npm run build && npx astro preview`.
 - **Create local tracks with one `createLocalTracks` call.** Calling `createLocalVideoTrack` and `createLocalAudioTrack` concurrently never settles.
-- **`PUBLIC_` variables are frozen into the bundle at build time**, so creating `.env` after a build changes nothing until you rebuild.
-  The build now throws instead of shipping a bundle with no server address; see the gate at the top of `astro.config.mjs`.
 - Each OBS source needs its own identity (`obs-<slug>`). LiveKit evicts the older session on duplicate identity, so a shared viewer token would leave only the last browser source alive.
 
 ## Conventions
