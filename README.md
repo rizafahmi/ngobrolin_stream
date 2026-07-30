@@ -11,7 +11,7 @@ There are no accounts, no billing, and no multi-tenancy, and there never will be
 
 ## How it works
 
-- **LiveKit** is the SFU. Every guest uploads exactly one stream to the server, no matter how many other people are in the room. A peer-to-peer mesh would make each guest upload one copy per participant, and the guests' connections are far worse than the captain's.
+- **LiveKit** is the SFU, run on LiveKit Cloud's free Build plan. Every guest uploads exactly one stream to the server, no matter how many other people are in the room. A peer-to-peer mesh would make each guest upload one copy per participant, and the guests' connections are far worse than the captain's.
 - **The site is static, with no backend.** Guest tokens are long-lived and minted ahead of time by a CLI script, then embedded in permanent links. This is the same idea as vdo.ninja's `&push=ALICE`, and it is what lets the site deploy to any free static host.
 - **OBS consumes one browser source per guest**, so the captain keeps full per-person control of the layout.
 - **Identities are frozen at minting time.** A guest's LiveKit identity is a slug of their name, stored inside their token. Nothing the guest types can change it, so a saved OBS scene keeps working week after week.
@@ -139,12 +139,23 @@ The same URLs keep working next week.
 
 ## Running a show
 
-1. Start the LiveKit server, or confirm the hosted one is up.
-2. Open OBS. The browser sources reconnect on their own; they stay black until each guest joins.
-3. Send each guest their permanent link, or let them use the one they already have.
-4. Each guest opens the link, presses **Izinkan Kamera & Mikrofon**, checks that the green bar moves when they speak, then presses **Masuk Studio**.
-5. Guests see each other in a plain grid. That is for conversation only and is not what goes on air.
-6. Watch each OBS source come alive as its guest joins.
+1. Open the LiveKit Cloud usage dashboard for the project and read this month's bandwidth and participant-minutes meters. If either is past 70% of the month's allowance, move to the paid tier now, before recording, not during it.
+2. Start the LiveKit server, or confirm the hosted one is up.
+3. Open OBS. The browser sources reconnect on their own; they stay black until each guest joins.
+4. Send each guest their permanent link, or let them use the one they already have.
+5. Each guest opens the link, presses **Izinkan Kamera & Mikrofon**, checks that the green bar moves when they speak, then presses **Masuk Studio**.
+6. Guests see each other in a plain grid. That is for conversation only and is not what goes on air.
+7. Watch each OBS source come alive as its guest joins.
+
+**Why step 1 exists, and the risk it accepts.**
+A measured two-hour show uses about 8.0 GB downstream and 720 participant-minutes.
+The free Build plan allows 50 GB and 5,000 minutes per calendar month, resetting on the first, so four shows a month sit near 60% of both meters.
+Comfortable, but the allowance is a hard cap and there is no headroom to discover mid-recording.
+
+LiveKit's own documentation and its terms of service contradict each other about what actually happens at the ceiling, and neither states whether an already-connected participant is dropped mid-session.
+Under the more favourable reading, what breaks is reconnection.
+That turns a recoverable guest dropout - the case verified below, where a guest reopens their link and the OBS source picks them back up - into a permanent one for the rest of the recording.
+The pre-show check is the whole mitigation: it is cheap, and it is the only moment at which moving to the paid tier costs nothing.
 
 If a guest's connection drops and they rejoin, their OBS source recovers on its own.
 Verified locally: a guest fully disconnected, closed the page, reopened their link, and changed their display name, and the OBS browser source, never reloaded, picked the feed back up at 1280x720.
@@ -173,7 +184,12 @@ A TURN server is not free to set up:
 - Open ports 3478/udp and 5349/tcp, or 443/tcp for the TLS variant.
 - `turn.enabled: true` in `livekit.yaml`, plus the domain and ports. See the commented block in that file.
 
-LiveKit Cloud includes TURN, which is the reason to consider it if this becomes a recurring problem.
+When LiveKit terminates TLS itself rather than sitting behind a proxy, it reads the certificate once at startup.
+A renewal therefore needs a restart, and a restart disconnects every participant.
+Schedule renewals away from recording day.
+
+None of this applies on the current setup: **LiveKit Cloud includes TURN**, so the relay case is already covered without any of the work above.
+This section is here for the self-hosted alternative.
 
 **This is the part that has not been verified.**
 Everything else here was tested end to end on one machine.
@@ -191,7 +207,37 @@ Do not spend more than two minutes on diagnosis.
 
 This is insurance for the day something breaks, not a recommendation.
 
-## Self-hosting
+## The media server: LiveKit Cloud
+
+The show runs on LiveKit Cloud's free Build plan.
+It includes TURN, needs no server, no certificate, and no renewal schedule, and the measured load fits inside the free allowance with room to spare (see "Running a show" for the numbers and the one risk this accepts).
+
+### Switching a local or self-hosted setup over to Cloud
+
+1. Create the project in LiveKit Cloud and copy its `wss://` URL, API key, and API secret.
+2. In `.env`, set `PUBLIC_LIVEKIT_URL` to that `wss://` address, and set `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` to that project's credentials. See `.env.example`, which carries both shapes.
+3. **Rebuild.** `PUBLIC_LIVEKIT_URL` is baked in at build time, so `npm run build` must run again and the new `dist/` must be redeployed. Editing `.env` alone changes nothing that is already deployed. This is the trap to remember: the site will keep talking to the old server and look fine until a guest cannot connect.
+4. **Re-mint every guest link** against the deployed site address:
+
+   ```sh
+   npm run mint -- "Budi Santoso" "Sari Dewi" "Andre Wibowo" --base https://ngobrolin.example.com
+   ```
+
+   This is not optional. The old tokens are signed with the old API secret and the Cloud project will reject them.
+5. Send each guest their new link.
+
+**Guest identities do not change.**
+The identity is a slug of the name, and slugging does not depend on the server or the credentials.
+Every saved OBS scene keeps working: in each browser source URL, only the `t=` half needs replacing, and the `id=` half stays exactly as it is.
+So the work is one rebuild, one redeploy, one message per guest, and one paste per OBS source.
+
+## Self-hosting: the documented alternative
+
+Cloud is the current path; this is the one to come back to.
+Self-hosting becomes the right answer if the show grows past three guests, past two hours, or past five recordings a month - past that, the free allowance stops fitting and the fixed cost of a server wins.
+
+Switching back is a rebuild, a re-mint, and a redeploy: the same three steps as above with the values pointed the other way.
+The choice is cheap to reverse in either direction, which is why it does not need to be made carefully.
 
 `podman-compose.yml` and `livekit.yaml` are the documented path for running the SFU on a server the captain owns.
 
@@ -239,6 +285,7 @@ Not verified, and not claimed to work:
 - **Behaviour across real NAT**, and whether any guest will need TURN. See the TURN section above.
 - **Real OBS Studio.** The view page was verified in Chrome, the same engine OBS embeds, but OBS itself was never run. The browser-source settings above come from the documented behaviour of those options, not from observation.
 - **The podman self-hosting path.** Written, never run.
+- **The LiveKit Cloud path.** The switching procedure above is written from the documented behaviour of the build-time variable and the token signing, both of which were verified locally; no Cloud project has been created, so the procedure itself has not been walked through. The usage numbers are measured locally, not read off a Cloud dashboard.
 - **Browsers other than Chrome.** The guests are all on desktop Chrome, so that is the only target, and there is no mobile layout. Testing used Chrome Canary, the only Chrome installed on this machine.
 - **Sustained multi-hour recording**, thermal behaviour, or memory growth over a real show's length.
 
