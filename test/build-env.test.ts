@@ -31,9 +31,13 @@ function scaffoldProject(): string {
   return dir;
 }
 
-function runBuild(dir: string): { status: number; output: string } {
+function runBuild(dir: string, overrides: Record<string, string> = {}): {
+  status: number;
+  output: string;
+} {
   const env = { ...process.env };
   delete env.PUBLIC_LIVEKIT_URL;
+  Object.assign(env, overrides);
   try {
     const output = execFileSync(
       process.execPath,
@@ -62,6 +66,16 @@ describe('build-time environment gate', () => {
     const dir = scaffoldProject();
     writeFileSync(join(dir, '.env'), 'PUBLIC_LIVEKIT_URL=ws://localhost:7880\n');
     const { status, output } = runBuild(dir);
+    expect(output).not.toContain('PUBLIC_LIVEKIT_URL');
+    expect(status).toBe(0);
+  }, 180_000);
+
+  // How a CI or deploy build supplies it: no `.env` on disk, the variable exported into
+  // the build process instead.
+  it('builds with no .env when PUBLIC_LIVEKIT_URL comes from the process environment', () => {
+    const { status, output } = runBuild(scaffoldProject(), {
+      PUBLIC_LIVEKIT_URL: 'wss://livekit.example.com',
+    });
     expect(output).not.toContain('PUBLIC_LIVEKIT_URL');
     expect(status).toBe(0);
   }, 180_000);
