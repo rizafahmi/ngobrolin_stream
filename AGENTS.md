@@ -26,6 +26,9 @@ Any change to slugging is a breaking change to every OBS scene the captain has s
   It swaps the device inside the live publication (the track sid survives, so OBS browser sources never reload), defers a microphone swap while the track is muted, and re-sinks every remote audio element including tiles created later.
   Beware: `Room.getActiveDevice` returns a placeholder `'default'` for every kind before any switch has happened, which for cameras is not a real Chrome device id; see `activeInputId` in `src/scripts/join.ts`.
 - **Create local tracks with one `createLocalTracks` call.** Calling `createLocalVideoTrack` and `createLocalAudioTrack` concurrently never settles.
+- **Muted must suppress every speaking cue**, whatever the library or an analyser reports. That rule lives in `micCue` (`src/lib/mic-cue.ts`) and every cue must go through it: a guest who believes they are heard while muted is the failure the cues exist to prevent. The OBS view page shows no cues at all, by the same rule that keeps it bare - everything on it goes on air.
+- **Cue painting is a per-frame job, tile structure is not.** `paintCues` in `src/scripts/join.ts` writes the speaking outline and the local level bar on every animation frame, and only when a value actually changed; `renderGrid` rebuilds tiles and must stay out of that loop, since re-attaching a track at frame rate flashes the video.
+- **One analyser per session, re-bound rather than restarted.** The join card's bar and the local tile's bar are the same measurement, and the analyser follows the microphone by noticing that `mediaStreamTrack` changed - which is what an in-room device switch and every unmute do.
 - Each OBS source needs its own identity (`obs-<slug>`). LiveKit evicts the older session on duplicate identity, so a shared viewer token would leave only the last browser source alive.
 
 ## Conventions

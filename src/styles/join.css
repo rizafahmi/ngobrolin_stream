@@ -425,6 +425,39 @@ button {
   height: 13px;
 }
 
+/* Speaking cue. An outline rather than a border so the tile never changes size, and
+   one calm ring rather than an animated meter: four bouncing equalisers would turn a
+   conversation into a dashboard. paintCues only ever sets this on an unmuted tile. */
+.tile.is-speaking {
+  outline: 2px solid var(--ok);
+  outline-offset: -2px;
+  box-shadow: 0 0 0 3px rgba(62, 207, 142, 0.18);
+}
+
+/* The local guest's own level, along the bottom edge of their own tile: the same
+   "your mic is alive" reassurance the join card gives, carried into the room. */
+.tile-level {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  display: none;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.tile.is-local .tile-level {
+  display: block;
+}
+
+.tile-level-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--ok);
+  transition: width 80ms linear;
+}
+
 .tile-avatar {
   position: absolute;
   inset: 0;
@@ -434,6 +467,26 @@ button {
   font-weight: 600;
   color: var(--text-muted);
   background: var(--surface-raised);
+}
+
+/* Blocked audio playback. Amber rather than red: nothing is broken, the browser is
+   just waiting for a click. Sits between the header and the grid so it is impossible
+   to miss, and takes its own row so the tiles never move sideways. */
+.audio-blocked {
+  flex: none;
+  margin: 12px 20px 0;
+  padding: 10px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: rgba(255, 107, 53, 0.12);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 550;
+  text-align: center;
+}
+
+.audio-blocked:hover {
+  background: rgba(255, 107, 53, 0.2);
 }
 
 .room-foot {

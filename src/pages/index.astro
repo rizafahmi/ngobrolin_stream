@@ -117,6 +117,10 @@ import '../styles/join.css';
         <span class="status" id="room-status" data-state="connecting">Menyambung...</span>
       </header>
 
+      <!-- Blocked audio playback is silent and invisible on its own, so it gets its
+           own line, in its own words, separate from the speaking cues on the tiles. -->
+      <button class="audio-blocked" id="audio-blocked" type="button" hidden></button>
+
       <div class="grid" id="grid"></div>
 
       <footer class="room-foot">

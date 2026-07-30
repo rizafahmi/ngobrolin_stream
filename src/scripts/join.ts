@@ -21,11 +21,13 @@ import {
   type RemoteParticipant,
 } from 'livekit-client';
 
+import { audioPlaybackNotice } from '../lib/audio-playback.ts';
 import { connectionStatus } from '../lib/connection-status.ts';
 import { deviceOptions, offerSpeakerPicker, resolveActiveDevice, type DeviceOption } from '../lib/devices.ts';
 import { ROOM_NAME } from '../lib/identity.ts';
 import { gridColumns, orderTiles, tileWidth } from '../lib/layout.ts';
 import { classifyJoinFailure, classifyMediaError } from '../lib/media-errors.ts';
+import { micCue, micLevelPercent, peakAmplitude } from '../lib/mic-cue.ts';
 import {
   AUDIO_CAPTURE_CONSTRAINTS,
   PUBLISH_AUDIO_PRESET,
@@ -47,7 +49,10 @@ export function startJoinPage(): void {
   const el = collectElements();
   const preview: PreviewState = { video: null, audio: null };
   let room: Room | null = null;
-  let meterStop: (() => void) | null = null;
+  // Latest peak amplitude of this guest's own captured audio, 0..1. Fed by the single
+  // analyser started in startLevelMonitor and read by whichever bar is on screen.
+  let localLevel = 0;
+  let levelMonitorRunning = false;
   // The speaker chosen on the join card, carried into Room options at join time.
   // Session-scoped on purpose: a reload goes back to the browser default.
   let speakerId: string | undefined;
@@ -121,7 +126,7 @@ export function startJoinPage(): void {
       preview.video = video;
       preview.audio = audio;
       attachPreview(video);
-      startMeter(audio);
+      startLevelMonitor();
       await populateDeviceLists();
       showPanel('ready');
     } catch (error) {
@@ -192,8 +197,9 @@ export function startJoinPage(): void {
   async function switchMic(deviceId: string): Promise<void> {
     if (!preview.audio) return;
     try {
+      // The level monitor re-binds itself when the underlying MediaStreamTrack
+      // changes, so nothing here has to restart it.
       await preview.audio.setDeviceId(deviceId);
-      startMeter(preview.audio);
     } catch (error) {
       showError(`Tidak bisa pindah mikrofon: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -201,36 +207,126 @@ export function startJoinPage(): void {
 
   // ---------- microphone level meter ----------
 
-  function startMeter(audio: LocalAudioTrack): void {
-    meterStop?.();
+  /** This guest's own microphone track, wherever it currently lives. */
+  function localMicTrack(): LocalAudioTrack | null {
+    if (room) {
+      const publication = room.localParticipant.getTrackPublication(Track.Source.Microphone);
+      const track = publication?.track;
+      return track instanceof LocalAudioTrack ? track : null;
+    }
+    return preview.audio;
+  }
+
+  /**
+   * One analyser for the whole session, feeding both level bars.
+   *
+   * The join card's bar and the local tile's bar are the same measurement shown in two
+   * places, so there is exactly one AudioContext and it keeps running across the join:
+   * the reassurance the bar gives is needed most *after* joining, which is precisely
+   * where the page used to go quiet.
+   *
+   * It re-binds whenever the underlying MediaStreamTrack changes rather than being
+   * restarted by every caller that might change it. That covers an in-room mic switch
+   * (`Room.switchActiveDevice` swaps the media track inside the live publication) and
+   * every unmute (muting stops the track and unmuting creates a new one).
+   */
+  function startLevelMonitor(): void {
+    if (levelMonitorRunning) return;
+    levelMonitorRunning = true;
+
     const context = new AudioContext();
-    const source = context.createMediaStreamSource(new MediaStream([audio.mediaStreamTrack]));
     const analyser = context.createAnalyser();
     analyser.fftSize = 512;
-    source.connect(analyser);
     const buffer = new Uint8Array(analyser.frequencyBinCount);
-    let raf = 0;
+    let source: MediaStreamAudioSourceNode | null = null;
+    let bound: MediaStreamTrack | null = null;
 
     const tick = (): void => {
-      analyser.getByteTimeDomainData(buffer);
-      let peak = 0;
-      for (const sample of buffer) {
-        peak = Math.max(peak, Math.abs(sample - 128) / 128);
+      const media = localMicTrack()?.mediaStreamTrack ?? null;
+      if (media !== bound) {
+        source?.disconnect();
+        source = media ? context.createMediaStreamSource(new MediaStream([media])) : null;
+        source?.connect(analyser);
+        bound = media;
       }
-      // Speech peaks well below full scale, so scale up before clamping. This bar is
-      // a "your mic is alive" signal, not a calibrated meter.
-      el.meterFill.style.width = `${Math.min(100, Math.round(peak * 220))}%`;
-      raf = requestAnimationFrame(tick);
+      if (source) {
+        analyser.getByteTimeDomainData(buffer);
+        localLevel = peakAmplitude(buffer);
+      } else {
+        localLevel = 0;
+      }
+      paintCues();
+      requestAnimationFrame(tick);
     };
-    raf = requestAnimationFrame(tick);
+    requestAnimationFrame(tick);
+  }
 
-    meterStop = () => {
-      cancelAnimationFrame(raf);
-      source.disconnect();
-      void context.close();
-      el.meterFill.style.width = '0%';
-      meterStop = null;
-    };
+  /**
+   * Paint the live cues: the join card's bar before joining, and in the room the
+   * speaking outline on every tile plus the level bar on this guest's own tile.
+   *
+   * This is deliberately separate from renderGrid. Levels and speaking change many
+   * times a second, tile structure changes when somebody joins or leaves, and
+   * rebuilding tiles at frame rate would flash video.
+   */
+  function paintCues(): void {
+    if (!room) {
+      const width = `${micLevelPercent(localLevel)}%`;
+      if (el.meterFill.style.width !== width) el.meterFill.style.width = width;
+      return;
+    }
+    for (const node of Array.from(el.grid.children) as HTMLElement[]) {
+      const participant = participantByIdentity(node.dataset.identity ?? '');
+      if (!participant) continue;
+      const isLocal = participant === room.localParticipant;
+      const micPub = participant.getTrackPublication(Track.Source.Microphone);
+      const cue = micCue({
+        // No microphone publication at all counts as muted: from every other guest's
+        // side the effect is identical.
+        muted: micPub?.isMuted ?? true,
+        // Remote speaking comes from the SFU via ActiveSpeakersChanged. Only the local
+        // guest's own capture can be measured here, so only their tile gets a level.
+        speaking: participant.isSpeaking,
+        level: isLocal ? localLevel : 0,
+      });
+      // Written only on change. This runs on every animation frame, and re-writing
+      // identical values would dirty the tree - and the accessibility snapshot built
+      // from it - sixty times a second for nothing.
+      if (node.classList.contains('is-speaking') !== cue.speaking) {
+        node.classList.toggle('is-speaking', cue.speaking);
+      }
+      const fill = node.querySelector<HTMLElement>('.tile-level-fill');
+      const width = `${cue.levelPercent}%`;
+      if (fill && fill.style.width !== width) fill.style.width = width;
+    }
+  }
+
+  function participantByIdentity(identity: string): Participant | undefined {
+    if (!room) return undefined;
+    if (identity === room.localParticipant.identity) return room.localParticipant;
+    return room.remoteParticipants.get(identity);
+  }
+
+  // ---------- blocked audio playback ----------
+
+  /**
+   * Browsers refuse to start audio on a page nobody has interacted with, and a blocked
+   * play() is silent and invisible - indistinguishable from a room where nobody is
+   * talking. This says so in its own words, and offers the one thing that fixes it:
+   * a real user gesture, which is what Room.startAudio needs.
+   */
+  function updateAudioNotice(): void {
+    if (!room) return;
+    let remoteAudioCount = 0;
+    for (const participant of room.remoteParticipants.values()) {
+      if (participant.getTrackPublication(Track.Source.Microphone)?.track) remoteAudioCount += 1;
+    }
+    const notice = audioPlaybackNotice({
+      canPlayback: room.canPlaybackAudio,
+      remoteAudioCount,
+    });
+    el.audioBlocked.textContent = notice.message;
+    el.audioBlocked.hidden = !notice.visible;
   }
 
   // ---------- joining ----------
@@ -281,7 +377,8 @@ export function startJoinPage(): void {
         source: Track.Source.Microphone,
       });
 
-      meterStop?.();
+      // The level monitor keeps running: from here it drives the local tile's bar.
+      el.meterFill.style.width = '0%';
       el.stageJoin.hidden = true;
       el.stageRoom.hidden = false;
       renderGrid();
@@ -309,6 +406,11 @@ export function startJoinPage(): void {
       .on(RoomEvent.TrackUnmuted, rerender)
       .on(RoomEvent.ParticipantNameChanged, rerender)
       .on(RoomEvent.LocalTrackPublished, rerender)
+      // The level monitor's frame loop repaints the cues anyway; this is the correct
+      // trigger for the remote half of them and keeps the outlines honest in a
+      // backgrounded tab, where requestAnimationFrame stops firing.
+      .on(RoomEvent.ActiveSpeakersChanged, () => paintCues())
+      .on(RoomEvent.AudioPlaybackStatusChanged, () => updateAudioNotice())
       .on(RoomEvent.ActiveDeviceChanged, (kind, deviceId) => {
         // Fires on our own switches and on livekit's automatic fallback when the
         // active device is unplugged; either way the open picker must follow.
@@ -376,6 +478,11 @@ export function startJoinPage(): void {
       const node = el.grid.querySelector<HTMLElement>(`[data-identity="${cssEscape(tile.identity)}"]`);
       if (node) el.grid.append(node);
     }
+
+    // A tile created this render has no cues on it yet, and whether anyone's audio is
+    // playable depends on who is in the room.
+    paintCues();
+    updateAudioNotice();
   }
 
   /**
@@ -407,7 +514,10 @@ export function startJoinPage(): void {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M3 3l18 18M9 9v3a3 3 0 0 0 4.5 2.6M15 11V5a3 3 0 0 0-6-.6M5 11a7 7 0 0 0 10.3 6.2M12 18v4" />
           </svg>
-        </span>`;
+        </span>
+        <!-- Only shown on the local tile, where the level is actually measurable.
+             CSS hides it elsewhere; paintCues writes the width. -->
+        <span class="tile-level"><span class="tile-level-fill"></span></span>`;
       el.grid.append(node);
     }
     node.classList.toggle('is-local', isLocal);
@@ -569,6 +679,11 @@ export function startJoinPage(): void {
   el.btnMic.addEventListener('click', () => void toggleMic());
   el.btnCam.addEventListener('click', () => void toggleCam());
   el.btnDevices.addEventListener('click', () => toggleDevicesPop());
+  // startAudio must be called from a real user gesture, which is exactly what this
+  // click is. The status event then hides the notice.
+  el.audioBlocked.addEventListener('click', () => {
+    void room?.startAudio().catch(() => undefined);
+  });
   el.btnLeave.addEventListener('click', () => void leave());
   el.selectCameraRoom.addEventListener('change', () =>
     void switchRoomDevice('videoinput', el.selectCameraRoom.value, 'kamera'),
@@ -659,6 +774,7 @@ function collectElements() {
     fieldSpeakerRoom: need<HTMLElement>('field-speaker-room'),
     grid: need<HTMLElement>('grid'),
     roomStatus: need<HTMLElement>('room-status'),
+    audioBlocked: need<HTMLButtonElement>('audio-blocked'),
     panels: {
       permission: need<HTMLElement>('panel-permission'),
       denied: need<HTMLElement>('panel-denied'),

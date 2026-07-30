@@ -145,6 +145,9 @@ The same URLs keep working next week.
 4. Send each guest their permanent link, or let them use the one they already have.
 5. Each guest opens the link, presses **Izinkan Kamera & Mikrofon**, checks that the green bar moves when they speak, then presses **Masuk Studio**.
 6. Guests see each other in a plain grid. That is for conversation only and is not what goes on air.
+   A tile is outlined in green while that person is talking, and a guest's own tile carries a thin level bar along its bottom edge, so the reassurance the join card's green bar gives does not stop at the door.
+   A muted guest never gets either cue, whatever the server reports, because the one mistake worth designing against is somebody believing they are heard while muted.
+   If the browser refuses to start audio playback, a separate line appears above the grid saying so and offering to fix it on click; that is a different message from nobody talking, and it never appears when there is nothing to hear.
 7. Watch each OBS source come alive as its guest joins.
 
 **Why step 1 exists, and the risk it accepts.**
@@ -286,7 +289,16 @@ Verified end to end, locally, against a real LiveKit server and real WebRTC medi
   - Speaker switch in-room re-sank the existing remote tiles, and a third guest joining afterwards got a tile playing through the switched output.
   - A `devicechange` event repopulated the pickers on both the join card and the open popover.
 - What was *not* observed there: a physical hot-plug (the `devicechange` event was dispatched synthetically over static fake devices), and the hidden-picker path on a browser without `setSinkId` (the gate is `offerSpeakerPicker` in `src/lib/devices.ts`, unit tested, but no such browser was run).
-- 116 tests (`npm test`) over identity, token minting, URL shapes, CLI parsing, quality policy, grid layout, device picker decisions, and error classification, plus real-build checks that the build refuses a missing `PUBLIC_LIVEKIT_URL` and that minting refuses a `dist/` built against a different address.
+- The in-room speaking cues, with two guests against a real server:
+  - The speaking guest's own tile carried the outline and a moving level bar for all 50 samples of a 5-second window, and the other guest's page carried the outline on that same person's *remote* tile for all 50 samples of its own window, while neither page ever put an outline on the quiet guest.
+  - The level bar appears only on the guest's own tile: on the other page the same element computed to `display: none`.
+  - Muting stopped the outline and emptied the level bar on both pages within one sample, and the muted badge appeared, as it did before this change.
+  - **Muted wins over a lying library**: with `isSpeaking` forcibly overridden to `true` on a muted remote participant, the outline stayed off for all 30 samples while the muted badge stayed on.
+  - Unmuting restored both the outline and the level bar.
+  - Turning the camera off kept the avatar placeholder behaviour intact, with the outline and level bar still correct over the placeholder.
+  - The level bar followed the microphone across a track swap: replacing the live `MediaStreamTrack` inside the publication re-bound the analyser with no restart, which is the same path an in-room mic switch and every unmute take.
+- The blocked-audio notice, **partly**: with `Room.canPlaybackAudio` driven to `false`, the notice appeared with its own wording, and a real keyboard activation of it called `Room.startAudio()` exactly once and cleared the notice while remote audio kept playing.
+- 134 tests (`npm test`) over identity, token minting, URL shapes, CLI parsing, quality policy, grid layout, device picker decisions, error classification, and the microphone cue and blocked-audio rules, plus real-build checks that the build refuses a missing `PUBLIC_LIVEKIT_URL` and that minting refuses a `dist/` built against a different address.
 
 Not verified, and not claimed to work:
 
@@ -296,6 +308,8 @@ Not verified, and not claimed to work:
 - **The LiveKit Cloud path.** The switching procedure above is written from the documented behaviour of the build-time variable and the token signing, both of which were verified locally; no Cloud project has been created, so the procedure itself has not been walked through. The usage numbers are measured locally, not read off a Cloud dashboard.
 - **Browsers other than Chrome.** The guests are all on desktop Chrome, so that is the only target, and there is no mobile layout. Testing used Chrome Canary, the only Chrome installed on this machine.
 - **Sustained multi-hour recording**, thermal behaviour, or memory growth over a real show's length.
+- **A genuinely browser-blocked audio playback.** Chrome would not block it: once a page has been granted microphone permission Chrome treats it as allowed to autoplay, and neither `--autoplay-policy=document-user-activation-required` nor `user-gesture-required` produced a blocked state on a page that had joined the room. The notice's decision rule is unit tested and its wiring was verified against a driven `canPlaybackAudio`, but the browser condition that triggers it in the wild was never actually reproduced.
+- **Speaking cues driven by a real human voice.** Chrome's fake microphone beeps for only about 16% of each second, which is below LiveKit's default speaker threshold, and `--use-file-for-fake-audio-capture` produced silence in Chrome Canary here. The verification above therefore fed continuous synthetic audio into the live publication and ran the local server with a more sensitive `audio:` block (`active_level: 45`, `min_percentile: 5`, `update_interval: 200`). Real speech clears LiveKit's defaults comfortably, but that is reasoning, not an observation.
 
 ## Layout of the code
 
@@ -308,6 +322,8 @@ src/lib/            Pure logic, all unit-tested
   quality.ts          Simulcast and subscription policy
   layout.ts           Grid columns, tile sizing, tile order
   media-errors.ts     getUserMedia and join failures -> Indonesian guidance
+  mic-cue.ts          Speaking outline and level bar, with muted suppressing both
+  audio-playback.ts   When to show the "browser blocked the audio" notice
   connection-status.ts
   cli-args.ts         Argument parsing for the mint CLI
 src/pages/          index.astro (join + room), view.astro (OBS source)
