@@ -286,7 +286,7 @@ Verified end to end, locally, against a real LiveKit server and real WebRTC medi
   - Speaker switch in-room re-sank the existing remote tiles, and a third guest joining afterwards got a tile playing through the switched output.
   - A `devicechange` event repopulated the pickers on both the join card and the open popover.
 - What was *not* observed there: a physical hot-plug (the `devicechange` event was dispatched synthetically over static fake devices), and the hidden-picker path on a browser without `setSinkId` (the gate is `offerSpeakerPicker` in `src/lib/devices.ts`, unit tested, but no such browser was run).
-- 101 unit tests over identity, token minting, URL shapes, CLI parsing, quality policy, grid layout, device picker decisions, and error classification.
+- 116 tests (`npm test`) over identity, token minting, URL shapes, CLI parsing, quality policy, grid layout, device picker decisions, and error classification, plus real-build checks that the build refuses a missing `PUBLIC_LIVEKIT_URL` and that minting refuses a `dist/` built against a different address.
 
 Not verified, and not claimed to work:
 
