@@ -86,6 +86,32 @@ describe('mintObsToken', () => {
     const obs = claimsOf(await mintObsToken(CREDS, 'Budi'));
     expect(guest.sub).not.toBe(obs.sub);
   });
+
+  it('still mints the camera identity when no source is asked for', async () => {
+    expect(claimsOf(await mintObsToken(CREDS, 'Budi Santoso')).sub).toBe('obs-budi-santoso');
+    expect(claimsOf(await mintObsToken(CREDS, 'Budi Santoso', { source: 'camera' })).sub).toBe(
+      'obs-budi-santoso',
+    );
+  });
+
+  it('mints a separate identity for the screen source of the same guest', async () => {
+    const camera = claimsOf(await mintObsToken(CREDS, 'Budi Santoso'));
+    const screen = claimsOf(await mintObsToken(CREDS, 'Budi Santoso', { source: 'screen' }));
+    expect(screen.sub).toBe('obs-budi-santoso.screen');
+    expect(screen.sub).not.toBe(camera.sub);
+  });
+
+  it('gives the screen token the same subscribe-only, hidden grant', async () => {
+    const grant = claimsOf(await mintObsToken(CREDS, 'Budi', { source: 'screen' })).video;
+    expect(grant).toMatchObject({
+      roomJoin: true,
+      room: ROOM_NAME,
+      canPublish: false,
+      canPublishData: false,
+      canSubscribe: true,
+      hidden: true,
+    });
+  });
 });
 
 describe('credentialsFromEnv', () => {

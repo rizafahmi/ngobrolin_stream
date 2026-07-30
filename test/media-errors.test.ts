@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { classifyJoinFailure, classifyMediaError } from '../src/lib/media-errors.ts';
+import {
+  classifyJoinFailure,
+  classifyMediaError,
+  classifyScreenShareError,
+} from '../src/lib/media-errors.ts';
 
 /** Chrome surfaces getUserMedia failures as a DOMException with a meaningful name. */
 function domError(name: string, message = 'boom'): Error {
@@ -58,5 +62,27 @@ describe('classifyJoinFailure', () => {
 
   it('survives a non-Error rejection', () => {
     expect(classifyJoinFailure('nope')).toContain('nope');
+  });
+});
+
+describe('classifyScreenShareError', () => {
+  it('says nothing when the guest simply closed the picker', () => {
+    // Chrome reports a cancelled share exactly like a denied permission. Cancelling is
+    // the normal way to change your mind, so an alert here would be noise.
+    expect(classifyScreenShareError(domError('NotAllowedError'))).toBeNull();
+  });
+
+  it('says so when the browser cannot share a screen at all', () => {
+    const message = classifyScreenShareError(domError('DeviceUnsupportedError'));
+    expect(message).toMatch(/browser/i);
+    expect(message).not.toMatch(/undefined/);
+  });
+
+  it('names an unexpected failure rather than swallowing it', () => {
+    expect(classifyScreenShareError(domError('AbortError', 'kaboom'))).toContain('kaboom');
+  });
+
+  it('survives a non-Error rejection', () => {
+    expect(classifyScreenShareError('nope')).toContain('nope');
   });
 });

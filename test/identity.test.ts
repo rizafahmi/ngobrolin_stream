@@ -50,6 +50,23 @@ describe('identities', () => {
     expect(isObsIdentity(guestIdentity('budi'))).toBe(false);
   });
 
+  it('leaves the camera OBS identity exactly as every saved scene already has it', () => {
+    expect(obsIdentity('budi-santoso', 'camera')).toBe('obs-budi-santoso');
+    expect(obsIdentity('budi-santoso', 'camera')).toBe(obsIdentity('budi-santoso'));
+  });
+
+  it('gives the screen source its own identity, or LiveKit would evict the camera one', () => {
+    expect(obsIdentity('budi-santoso', 'screen')).not.toBe(obsIdentity('budi-santoso'));
+    expect(isObsIdentity(obsIdentity('budi-santoso', 'screen'))).toBe(true);
+  });
+
+  it('separates the two with a character no slug can contain, so nothing can collide', () => {
+    // A guest called "Budi Screen" slugs to `budi-screen`; a dash-joined suffix would
+    // make their camera source and Budi's screen source the same LiveKit identity.
+    expect(obsIdentity('budi', 'screen')).toBe('obs-budi.screen');
+    expect(obsIdentity('budi-screen', 'camera')).not.toBe(obsIdentity('budi', 'screen'));
+  });
+
   it('pins the room name, since every link ever minted embeds it', () => {
     expect(ROOM_NAME).toBe('ngobrolin');
   });

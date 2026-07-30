@@ -13,6 +13,8 @@
  * - The room name is a single fixed constant. One show, one room, forever.
  */
 
+import type { ViewSource } from './view-source.ts';
+
 /** The one and only room. There is no multi-tenancy and there never will be. */
 export const ROOM_NAME = 'ngobrolin';
 
@@ -54,10 +56,21 @@ export function guestIdentity(name: string): string {
  *
  * Each OBS source needs its own identity: LiveKit disconnects the older session when
  * a second connection arrives with the same identity, so reusing one viewer identity
- * across four browser sources would leave only the last one alive.
+ * across four browser sources would leave only the last one alive. That applies just
+ * as much to a guest's two sources as to two guests, which is why the screen source
+ * gets a suffix rather than sharing the camera source's identity.
+ *
+ * The suffix is joined with a dot because a slug is only `[a-z0-9-]`: a dash-joined
+ * `obs-budi-screen` would be ambiguous between Budi's screen source and the camera
+ * source of a guest called "Budi Screen". A dot can never appear in a slug, so the
+ * two spaces cannot overlap.
+ *
+ * The camera form is unchanged and must stay that way: it is frozen into every OBS
+ * token the captain has already pasted into a scene.
  */
-export function obsIdentity(guestSlug: string): string {
-  return `${OBS_IDENTITY_PREFIX}${guestSlug}`;
+export function obsIdentity(guestSlug: string, source: ViewSource = 'camera'): string {
+  const suffix = source === 'screen' ? '.screen' : '';
+  return `${OBS_IDENTITY_PREFIX}${guestSlug}${suffix}`;
 }
 
 /** True when an identity belongs to an OBS browser source rather than a guest. */

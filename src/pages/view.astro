@@ -1,11 +1,14 @@
 ---
-// OBS browser source. One participant, full-bleed, nothing else.
+// OBS browser source. One participant, one of their two sources, full-bleed, nothing
+// else. `?id=<slug>` renders their camera; `?id=<slug>&source=screen` renders their
+// screen share, as a separate browser source the captain composes themselves.
 //
 // Anything visible on this page goes on air, so there is deliberately no UI: no
-// labels, no borders, no spinners, no error text. When something goes wrong the page
-// stays black and the captain sees a black source, which is the correct failure mode
-// during a live recording. Append &debug=1 to surface a diagnostic overlay while
-// setting things up; it is never shown otherwise.
+// labels, no borders, no spinners, no error text, and no speaking cues. When something
+// goes wrong the page stays black and the captain sees a black source, which is the
+// correct failure mode during a live recording - and it is also the correct state for a
+// screen source while nobody is sharing. Append &debug=1 to surface a diagnostic
+// overlay while setting things up; it is never shown otherwise.
 ---
 
 <!doctype html>
@@ -42,6 +45,14 @@
         display: block;
         /* Never mirrored: the preview flip is a self-view affordance and must not
            reach the broadcast. */
+      }
+
+      /* A shared screen is letterboxed, never cropped. `cover` is right for a face,
+         where the edges are wall; on a screen the edges are content, and a guest's
+         display is rarely the same shape as the captain's source. JS sets this from
+         the URL - see stage.dataset.source in view.ts. */
+      #stage[data-source='screen'] video {
+        object-fit: contain;
       }
 
       /* Only ever visible with &debug=1. */

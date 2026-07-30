@@ -59,6 +59,27 @@ export function classifyJoinFailure(error: unknown): string {
   return `Gagal masuk studio: ${message}`;
 }
 
+/**
+ * Message for a failure to start a screen share, or null to say nothing.
+ *
+ * Null is the important case. Chrome reports a guest closing the share picker as
+ * `NotAllowedError`, indistinguishable from a policy block, and changing your mind
+ * about sharing is a normal thing to do rather than an error to explain. Anything else
+ * is worth a line, because a share that silently does not start looks like a broken
+ * button.
+ */
+export function classifyScreenShareError(error: unknown): string | null {
+  const name = error instanceof Error ? error.name : '';
+
+  if (name === 'NotAllowedError') return null;
+
+  if (name === 'DeviceUnsupportedError' || name === 'NotSupportedError') {
+    return 'Browser ini tidak bisa membagikan layar. Coba pakai Chrome versi terbaru di laptop.';
+  }
+
+  return `Gagal membagikan layar: ${describe(error)}`;
+}
+
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

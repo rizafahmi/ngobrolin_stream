@@ -26,12 +26,15 @@ import { connectionStatus } from '../lib/connection-status.ts';
 import { deviceOptions, offerSpeakerPicker, resolveActiveDevice, type DeviceOption } from '../lib/devices.ts';
 import { ROOM_NAME } from '../lib/identity.ts';
 import { gridColumns, orderTiles, tileWidth } from '../lib/layout.ts';
-import { classifyJoinFailure, classifyMediaError } from '../lib/media-errors.ts';
+import { classifyJoinFailure, classifyMediaError, classifyScreenShareError } from '../lib/media-errors.ts';
 import { micCue, micLevelPercent, peakAmplitude } from '../lib/mic-cue.ts';
 import {
   AUDIO_CAPTURE_CONSTRAINTS,
   PUBLISH_AUDIO_PRESET,
+  PUBLISH_SCREEN_AUDIO_PRESET,
+  PUBLISH_SCREEN_PRESET,
   PUBLISH_VIDEO_PRESET,
+  screenSubscriptionQualityFor,
   subscriptionQualityFor,
 } from '../lib/quality.ts';
 import { decodeTokenPayload } from '../lib/jwt.ts';
@@ -43,6 +46,15 @@ type Panel = 'permission' | 'denied' | 'nodevice' | 'ready' | 'fatal';
 interface PreviewState {
   video: LocalVideoTrack | null;
   audio: LocalAudioTrack | null;
+}
+
+/** One cell of the grid. A guest sharing their screen owns two of these. */
+interface TileSpec {
+  /** Unique per cell. `<identity>` for a face, `<identity>.screen` for a screen. */
+  key: string;
+  kind: 'camera' | 'screen';
+  participant: Participant;
+  isLocal: boolean;
 }
 
 export function startJoinPage(): void {
@@ -276,6 +288,9 @@ export function startJoinPage(): void {
       return;
     }
     for (const node of Array.from(el.grid.children) as HTMLElement[]) {
+      // A shared screen is not a person: it cannot speak and it has no microphone, so
+      // neither cue means anything on it.
+      if (node.dataset.kind === 'screen') continue;
       const participant = participantByIdentity(node.dataset.identity ?? '');
       if (!participant) continue;
       const isLocal = participant === room.localParticipant;
@@ -405,7 +420,20 @@ export function startJoinPage(): void {
       .on(RoomEvent.TrackMuted, rerender)
       .on(RoomEvent.TrackUnmuted, rerender)
       .on(RoomEvent.ParticipantNameChanged, rerender)
-      .on(RoomEvent.LocalTrackPublished, rerender)
+      .on(RoomEvent.LocalTrackPublished, () => {
+        paintScreenButton();
+        renderGrid();
+      })
+      // The guest's own share ending: either from the footer button, or from Chrome's
+      // stop-sharing bar, which livekit turns into an unpublish. Guests use that bar,
+      // so this is not an optional path.
+      .on(RoomEvent.LocalTrackUnpublished, () => {
+        paintScreenButton();
+        renderGrid();
+      })
+      // A remote guest starting or stopping a share adds or removes a whole cell.
+      .on(RoomEvent.TrackPublished, rerender)
+      .on(RoomEvent.TrackUnpublished, rerender)
       // The level monitor's frame loop repaints the cues anyway; this is the correct
       // trigger for the remote half of them and keeps the outlines honest in a
       // backgrounded tab, where requestAnimationFrame stops firing.
@@ -433,49 +461,83 @@ export function startJoinPage(): void {
   }
 
   /**
-   * Ask the SFU for the smallest layer of every remote camera.
+   * Ask the SFU for the smallest layer of every remote video track.
    *
    * OBS is the only consumer that needs full resolution. Doing this on every
    * subscription is what keeps a five-person room from costing each guest four
-   * simultaneous 720p downstreams.
+   * simultaneous 720p downstreams - and it matters more for a shared screen than for a
+   * camera, since a screen's top layer is 1080p.
    */
   function applyGridQuality(publication: RemoteTrackPublication): void {
     if (publication.kind !== Track.Kind.Video) return;
-    const { quality, dimensions } = subscriptionQualityFor('grid');
+    const { quality, dimensions } =
+      publication.source === Track.Source.ScreenShare
+        ? screenSubscriptionQualityFor('grid')
+        : subscriptionQualityFor('grid');
     publication.setVideoQuality(quality);
     publication.setVideoDimensions(dimensions);
   }
 
   // ---------- grid rendering ----------
 
+  /**
+   * The tiles the grid should be showing, keyed rather than identified.
+   *
+   * A guest sharing their screen occupies two cells, so a participant identity is no
+   * longer a unique key. `key` is what the DOM is keyed on and what the order is sorted
+   * by: `<identity>` for a face and `<identity>.screen` for a screen, which sorts a
+   * screen immediately after the face it belongs to.
+   *
+   * The local guest deliberately gets no screen tile. They are looking at the thing
+   * they are sharing; adding a tile of it means a window inside a window inside a
+   * window whenever they share the whole display.
+   */
+  function tileSpecs(): TileSpec[] {
+    if (!room) return [];
+    const specs: TileSpec[] = [];
+    for (const participant of Array.from(room.remoteParticipants.values()) as RemoteParticipant[]) {
+      specs.push({
+        key: participant.identity,
+        kind: 'camera',
+        participant,
+        isLocal: false,
+      });
+      if (participant.getTrackPublication(Track.Source.ScreenShare)?.track) {
+        specs.push({
+          key: `${participant.identity}.screen`,
+          kind: 'screen',
+          participant,
+          isLocal: false,
+        });
+      }
+    }
+    specs.push({
+      key: room.localParticipant.identity,
+      kind: 'camera',
+      participant: room.localParticipant,
+      isLocal: true,
+    });
+    return specs;
+  }
+
   function renderGrid(): void {
     if (!room) return;
-    const participants: Participant[] = [
-      ...(Array.from(room.remoteParticipants.values()) as RemoteParticipant[]),
-      room.localParticipant,
-    ];
 
-    const tiles = orderTiles(
-      participants.map((participant) => ({
-        identity: participant.identity,
-        isLocal: participant === room!.localParticipant,
-        participant,
-      })),
-    );
+    const tiles = orderTiles(tileSpecs().map((spec) => ({ ...spec, identity: spec.key })));
 
     sizeGrid(tiles.length);
 
     const seen = new Set<string>();
     for (const tile of tiles) {
-      seen.add(tile.identity);
-      renderTile(tile.identity, tile.participant, tile.isLocal);
+      seen.add(tile.key);
+      renderTile(tile);
     }
     for (const node of Array.from(el.grid.children) as HTMLElement[]) {
-      if (!seen.has(node.dataset.identity ?? '')) node.remove();
+      if (!seen.has(node.dataset.key ?? '')) node.remove();
     }
     // Re-append in order so DOM order matches the intended tile order.
     for (const tile of tiles) {
-      const node = el.grid.querySelector<HTMLElement>(`[data-identity="${cssEscape(tile.identity)}"]`);
+      const node = el.grid.querySelector<HTMLElement>(`[data-key="${cssEscape(tile.key)}"]`);
       if (node) el.grid.append(node);
     }
 
@@ -500,12 +562,19 @@ export function startJoinPage(): void {
     el.grid.style.gridTemplateColumns = `repeat(${gridColumns(tileCount)}, ${size}px)`;
   }
 
-  function renderTile(identity: string, participant: Participant, isLocal: boolean): void {
-    let node = el.grid.querySelector<HTMLElement>(`[data-identity="${cssEscape(identity)}"]`);
+  function renderTile(spec: TileSpec): void {
+    if (spec.kind === 'screen') {
+      renderScreenTile(spec);
+      return;
+    }
+    const { participant, isLocal } = spec;
+    let node = el.grid.querySelector<HTMLElement>(`[data-key="${cssEscape(spec.key)}"]`);
     if (!node) {
       node = document.createElement('div');
       node.className = 'tile';
-      node.dataset.identity = identity;
+      node.dataset.key = spec.key;
+      node.dataset.kind = 'camera';
+      node.dataset.identity = participant.identity;
       node.innerHTML = `
         <div class="tile-avatar"></div>
         <video autoplay playsinline></video>
@@ -569,6 +638,57 @@ export function startJoinPage(): void {
     mutedBadge.hidden = !(micPub?.isMuted ?? true);
   }
 
+  /**
+   * A remote guest's shared screen, as its own cell.
+   *
+   * Deliberately barer than a camera tile: a name so it is clear whose screen this is,
+   * and nothing else. No avatar (a screen has no fallback worth drawing), no muted
+   * badge and no speaking cues (they belong to a person, and this cell is not one).
+   *
+   * The screen's audio is attached here, so a guest can hear the clip they are
+   * reacting to. The captain gets that audio separately and cleanly, as part of the
+   * screen browser source, rather than as whatever the sharer's microphone caught.
+   */
+  function renderScreenTile(spec: TileSpec): void {
+    const { participant } = spec;
+    let node = el.grid.querySelector<HTMLElement>(`[data-key="${cssEscape(spec.key)}"]`);
+    if (!node) {
+      node = document.createElement('div');
+      node.className = 'tile';
+      node.dataset.key = spec.key;
+      node.dataset.kind = 'screen';
+      node.dataset.identity = participant.identity;
+      node.innerHTML = `
+        <video autoplay playsinline></video>
+        <span class="tile-name"></span>`;
+      el.grid.append(node);
+    }
+
+    const video = node.querySelector('video') as HTMLVideoElement;
+    const nameLabel = node.querySelector('.tile-name') as HTMLElement;
+    nameLabel.textContent = `Layar ${participant.name || participant.identity}`;
+
+    const screenPub = participant.getTrackPublication(Track.Source.ScreenShare);
+    if (screenPub?.track && video.dataset.trackSid !== screenPub.trackSid) {
+      screenPub.track.attach(video);
+      video.dataset.trackSid = screenPub.trackSid;
+    }
+
+    const screenAudioPub = participant.getTrackPublication(Track.Source.ScreenShareAudio);
+    if (screenAudioPub?.track) {
+      let audio = node.querySelector('audio');
+      if (!audio) {
+        audio = document.createElement('audio');
+        audio.autoplay = true;
+        node.append(audio);
+      }
+      if (audio.dataset.trackSid !== screenAudioPub.trackSid) {
+        screenAudioPub.track.attach(audio);
+        audio.dataset.trackSid = screenAudioPub.trackSid;
+      }
+    }
+  }
+
   function cssEscape(value: string): string {
     return typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(value) : value.replace(/"/g, '\\"');
   }
@@ -589,6 +709,80 @@ export function startJoinPage(): void {
     await room.localParticipant.setCameraEnabled(enabled);
     el.btnCam.dataset.off = String(!enabled);
     el.btnCamLabel.textContent = enabled ? 'Kamera aktif' : 'Kamera mati';
+  }
+
+  /**
+   * Start or stop sharing this guest's screen.
+   *
+   * The published track is a second video publication, not a replacement for the
+   * camera: the captain's scene has a separate browser source for it and composes the
+   * two itself. `Track.Source.ScreenShare` is what keeps them apart, all the way to
+   * `src/lib/view-source.ts`.
+   *
+   * Screen encoding is its own policy - see PUBLISH_SCREEN_PRESET in
+   * src/lib/quality.ts. Note `screenShareEncoding` rather than `videoEncoding`:
+   * livekit reads a different field for a screen track and would silently ignore the
+   * other one. A single entry in `screenShareSimulcastLayers` yields two layers in
+   * total, the on-air one and the grid one, with no middle layer encoded for nobody.
+   */
+  async function toggleScreen(): Promise<void> {
+    if (!room) return;
+    const wanted = !room.localParticipant.isScreenShareEnabled;
+    el.btnScreen.disabled = true;
+    el.screenError.hidden = true;
+    try {
+      await room.localParticipant.setScreenShareEnabled(
+        wanted,
+        {
+          resolution: PUBLISH_SCREEN_PRESET.resolution,
+          contentHint: PUBLISH_SCREEN_PRESET.contentHint,
+          // Capturing the shared audio is a deliberate yes: playing a clip on air is
+          // part of the show. The browser's three voice processors stay off - see
+          // PUBLISH_SCREEN_AUDIO_PRESET - and suppressLocalAudioPlayback keeps that
+          // audio out of the sharer's own speakers, which is the one feedback path
+          // this page can close by itself.
+          audio: { ...PUBLISH_SCREEN_AUDIO_PRESET.capture },
+          suppressLocalAudioPlayback: PUBLISH_SCREEN_PRESET.suppressLocalAudioPlayback,
+          // Offer the guest every source Chrome can give: a tab, a window, a whole
+          // display, the system-audio checkbox, and the ability to switch what they are
+          // sharing without stopping and starting again.
+          systemAudio: 'include',
+          surfaceSwitching: 'include',
+        },
+        {
+          simulcast: PUBLISH_SCREEN_PRESET.simulcast,
+          videoCodec: 'vp8',
+          screenShareEncoding: { ...PUBLISH_SCREEN_PRESET.top.encoding },
+          screenShareSimulcastLayers: [PUBLISH_SCREEN_PRESET.low],
+          audioPreset: { maxBitrate: PUBLISH_SCREEN_AUDIO_PRESET.maxBitrate },
+          dtx: PUBLISH_SCREEN_AUDIO_PRESET.dtx,
+          red: PUBLISH_SCREEN_AUDIO_PRESET.red,
+        },
+      );
+    } catch (error) {
+      const message = classifyScreenShareError(error);
+      el.screenError.hidden = message === null;
+      el.screenError.textContent = message ?? '';
+    } finally {
+      el.btnScreen.disabled = false;
+      // Read the room back rather than assuming `wanted` took effect: a guest who
+      // closed the picker is still not sharing.
+      paintScreenButton();
+    }
+  }
+
+  /**
+   * Reflect whether this guest is sharing.
+   *
+   * Driven by the room's own state, not by what the button last did, because the guest
+   * can stop a share from Chrome's own stop-sharing bar and never touch this button.
+   * livekit unpublishes the track when the underlying capture ends, which fires
+   * LocalTrackUnpublished; that is the event that keeps this honest.
+   */
+  function paintScreenButton(): void {
+    const sharing = room?.localParticipant.isScreenShareEnabled ?? false;
+    el.btnScreen.dataset.active = String(sharing);
+    el.btnScreenLabel.textContent = sharing ? 'Layar dibagikan' : 'Bagikan layar';
   }
 
   async function leave(): Promise<void> {
@@ -678,6 +872,7 @@ export function startJoinPage(): void {
   });
   el.btnMic.addEventListener('click', () => void toggleMic());
   el.btnCam.addEventListener('click', () => void toggleCam());
+  el.btnScreen.addEventListener('click', () => void toggleScreen());
   el.btnDevices.addEventListener('click', () => toggleDevicesPop());
   // startAudio must be called from a real user gesture, which is exactly what this
   // click is. The status event then hides the notice.
@@ -764,6 +959,9 @@ function collectElements() {
     btnMicLabel: need<HTMLElement>('btn-mic-label'),
     btnCam: need<HTMLButtonElement>('btn-cam'),
     btnCamLabel: need<HTMLElement>('btn-cam-label'),
+    btnScreen: need<HTMLButtonElement>('btn-screen'),
+    btnScreenLabel: need<HTMLElement>('btn-screen-label'),
+    screenError: need<HTMLElement>('screen-error'),
     btnLeave: need<HTMLButtonElement>('btn-leave'),
     btnDevices: need<HTMLButtonElement>('btn-devices'),
     devicesPop: need<HTMLElement>('devices-pop'),

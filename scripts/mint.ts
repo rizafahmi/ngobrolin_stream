@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Mint a guest's permanent join link and the matching OBS browser source URL.
+ * Mint a guest's permanent join link and their two OBS browser source URLs.
  *
  *   npm run mint -- "Budi Santoso"
  *   npm run mint -- "Budi Santoso" --base https://ngobrolin.example.com
@@ -80,6 +80,13 @@ async function main(): Promise<void> {
     const slug = slugifyGuestName(name);
     const guestToken = await mintGuestToken(creds, name, { ttlSeconds: args.ttlSeconds });
     const obsToken = await mintObsToken(creds, name, { ttlSeconds: args.ttlSeconds });
+    // A second browser source needs a second token: LiveKit evicts the older session
+    // when a duplicate identity connects, so sharing the camera token between the two
+    // sources would leave only whichever OBS loaded last alive.
+    const obsScreenToken = await mintObsToken(creds, name, {
+      ttlSeconds: args.ttlSeconds,
+      source: 'screen',
+    });
 
     process.stdout.write(
       [
@@ -91,6 +98,9 @@ async function main(): Promise<void> {
         '',
         'OBS browser source URL:',
         `  ${viewUrl(args.baseUrl, slug, obsToken)}`,
+        '',
+        'OBS browser source URL (layar):',
+        `  ${viewUrl(args.baseUrl, slug, obsScreenToken, 'screen')}`,
         '',
         `Berlaku sampai: ${expiresAt.toISOString().slice(0, 10)}`,
         '',

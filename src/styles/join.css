@@ -392,6 +392,12 @@ button {
   transform: scaleX(-1);
 }
 
+/* A shared screen is letterboxed rather than cropped, in the grid for the same reason
+   as in the OBS source: the edges of a screen are content. */
+.tile[data-kind='screen'] video {
+  object-fit: contain;
+}
+
 .tile-name {
   position: absolute;
   left: 8px;
@@ -489,6 +495,20 @@ button {
   background: rgba(255, 107, 53, 0.2);
 }
 
+/* Same slot and geometry as .audio-blocked, in the failure colours. Not a button:
+   there is nothing to click, only something to read. */
+.room-alert {
+  flex: none;
+  margin: 12px 20px 0;
+  padding: 10px 14px;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  background: rgba(229, 72, 77, 0.1);
+  color: #ffb4b6;
+  font-size: 13px;
+  text-align: center;
+}
+
 .room-foot {
   position: relative;
   display: flex;
@@ -560,4 +580,11 @@ button {
   border-color: var(--danger);
   color: #ffb4b6;
   min-width: 100px;
+}
+
+/* "Bagikan layar" and "Layar dibagikan" are both longer than the mic and camera
+   labels, so this gets its own pre-measured width for the same reason: the footer
+   must not resize when the state changes. */
+.ctrl-screen {
+  min-width: 158px;
 }

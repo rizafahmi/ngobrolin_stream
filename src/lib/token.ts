@@ -14,6 +14,7 @@
  */
 import { AccessToken } from 'livekit-server-sdk';
 import { ROOM_NAME, guestIdentity, obsIdentity, slugifyGuestName } from './identity.ts';
+import type { ViewSource } from './view-source.ts';
 
 /** Five years. These links go in a chat thread and must outlive the current season. */
 export const DEFAULT_TTL_SECONDS = 5 * 365 * 24 * 60 * 60;
@@ -26,6 +27,14 @@ export interface Credentials {
 export interface MintOptions {
   /** Seconds until the token expires. Defaults to {@link DEFAULT_TTL_SECONDS}. */
   ttlSeconds?: number;
+}
+
+export interface MintObsOptions extends MintOptions {
+  /**
+   * Which of the guest's two OBS sources this token is for. Defaults to the camera,
+   * whose identity is frozen into every source the captain has already saved.
+   */
+  source?: ViewSource;
 }
 
 /**
@@ -79,17 +88,20 @@ export async function mintGuestToken(
  *
  * The identity is `obs-<slug>` rather than a single shared viewer identity: LiveKit
  * evicts the older session when a duplicate identity connects, so one shared token
- * across four browser sources would leave only the last one connected.
+ * across four browser sources would leave only the last one connected. A guest's
+ * screen source is a second browser source and so needs a second token, differing
+ * only in identity; the grant is byte-for-byte the same subscribe-only, hidden one.
  */
 export async function mintObsToken(
   creds: Credentials,
   guestName: string,
-  options: MintOptions = {},
+  options: MintObsOptions = {},
 ): Promise<string> {
   const slug = slugifyGuestName(guestName);
+  const source = options.source ?? 'camera';
   const at = new AccessToken(creds.apiKey, creds.apiSecret, {
-    identity: obsIdentity(slug),
-    name: `OBS ${slug}`,
+    identity: obsIdentity(slug, source),
+    name: source === 'screen' ? `OBS ${slug} layar` : `OBS ${slug}`,
     ttl: options.ttlSeconds ?? DEFAULT_TTL_SECONDS,
   });
   at.addGrant({

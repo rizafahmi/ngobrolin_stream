@@ -121,6 +121,10 @@ import '../styles/join.css';
            own line, in its own words, separate from the speaking cues on the tiles. -->
       <button class="audio-blocked" id="audio-blocked" type="button" hidden></button>
 
+      <!-- A screen share that fails to start looks exactly like a dead button, so the
+           reason gets its own line. A guest who simply closed the picker sees nothing. -->
+      <p class="room-alert" id="screen-error" hidden></p>
+
       <div class="grid" id="grid"></div>
 
       <footer class="room-foot">
@@ -154,6 +158,13 @@ import '../styles/join.css';
             <path d="M15 10.5 22 7v10l-7-3.5z" />
           </svg>
           <span id="btn-cam-label">Kamera aktif</span>
+        </button>
+        <button class="ctrl ctrl-screen" id="btn-screen" type="button" data-active="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <rect x="2" y="4" width="20" height="13" rx="2" />
+            <path d="M8 21h8M12 17v4" />
+          </svg>
+          <span id="btn-screen-label">Bagikan layar</span>
         </button>
         <button class="ctrl" id="btn-devices" type="button" data-active="false">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
