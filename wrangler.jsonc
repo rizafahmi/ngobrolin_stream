@@ -1,0 +1,23 @@
+{
+  // Declares this project to Cloudflare as what it actually is: a bag of pre-built
+  // static files with no server code at all.
+  //
+  // Its existence is the point. With no Wrangler configuration present, `wrangler
+  // deploy` falls back to framework detection, decides this is an Astro project, and
+  // non-interactively runs `astro add cloudflare` - which installs the adapter and
+  // converts the site to server-rendered output. Wrangler skips detection entirely as
+  // soon as it finds a real config file with no `pages_build_output_dir`, so this file
+  // is the guard against that conversion, not just a convenience.
+  //
+  // There is deliberately no `main`: an assets-only Worker is a supported Wrangler
+  // configuration, and adding an entry point here would create the backend that
+  // `astro.config.mjs` and the whole ahead-of-time token design exist to avoid.
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ngobrolinstream",
+  "compatibility_date": "2026-07-30",
+  "assets": {
+    // The output of `npm run build`. `PUBLIC_LIVEKIT_URL` is inlined into these files
+    // at build time, so what gets uploaded is only ever as correct as the last build.
+    "directory": "./dist"
+  }
+}

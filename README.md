@@ -267,6 +267,27 @@ Changing which LiveKit server the site talks to means rebuilding, not editing a 
 The API key and secret are never part of the build.
 They are only used by `scripts/mint.ts` on the captain's own machine.
 
+### Cloudflare Workers
+
+The deployed host is Cloudflare Workers, configured by the committed `wrangler.jsonc`.
+
+- **Build command:** `npm run build`, and it must have `PUBLIC_LIVEKIT_URL` available to it.
+  It is inlined into the bundle at build time, so a build without it fails outright - see the gate at the top of `astro.config.mjs`.
+  It can be supplied inline in the build command itself or as a Cloudflare build variable; a build variable is the tidier home, since it keeps the address out of the command line and lets it change without editing the command.
+  It is not a secret: it is a public `wss://` address that every guest's browser can already see.
+- **Output directory:** `dist`, declared once as `assets.directory` in `wrangler.jsonc`.
+- **What gets uploaded:** static files only.
+  There is no Worker entry point and there must not be one - `wrangler.jsonc` deliberately has no `main`, which is Wrangler's supported assets-only configuration.
+  This site has no backend by design; guest tokens are minted ahead of time.
+
+The Wrangler config also exists to stop Wrangler from guessing.
+Without it, `wrangler deploy` detects Astro and runs `astro add cloudflare`, installing the adapter and converting the project away from `output: 'static'` - non-interactively, inside the build container.
+
+To deploy by hand: `npm run deploy`, which is `npm run build && wrangler deploy`.
+The build is not optional in that chain, because uploading a `dist/` built against a different LiveKit server is exactly the silent failure the build gate and the mint guard exist to prevent.
+
+`npx wrangler deploy --dry-run` validates the configuration and resolves the assets directory without credentials, which is the way to check a config change without a real deploy.
+
 ## What was verified, and what was not
 
 Verified end to end, locally, against a real LiveKit server and real WebRTC media:
@@ -298,12 +319,14 @@ Verified end to end, locally, against a real LiveKit server and real WebRTC medi
   - Turning the camera off kept the avatar placeholder behaviour intact, with the outline and level bar still correct over the placeholder.
   - The level bar followed the microphone across a track swap: replacing the live `MediaStreamTrack` inside the publication re-bound the analyser with no restart, which is the same path an in-room mic switch and every unmute take.
 - The blocked-audio notice, **partly**: with `Room.canPlaybackAudio` driven to `false`, the notice appeared with its own wording, and a real keyboard activation of it called `Room.startAudio()` exactly once and cleared the notice while remote audio kept playing.
-- 134 tests (`npm test`) over identity, token minting, URL shapes, CLI parsing, quality policy, grid layout, device picker decisions, error classification, and the microphone cue and blocked-audio rules, plus real-build checks that the build refuses a missing `PUBLIC_LIVEKIT_URL` and that minting refuses a `dist/` built against a different address.
+- The Wrangler configuration, by `npx wrangler deploy --dry-run` after a real `npm run build`: Wrangler 4.115.0 read the 8 files in `dist/`, reported no bindings, and exited - with no framework detection, no `Detected Project Settings` prompt, and no attempt to run `astro add cloudflare`. No credentials were involved.
+- 135 tests (`npm test`) over identity, token minting, URL shapes, CLI parsing, quality policy, grid layout, device picker decisions, error classification, and the microphone cue and blocked-audio rules, plus real-build checks that the build refuses a missing `PUBLIC_LIVEKIT_URL` and that minting refuses a `dist/` built against a different address, and that `npm run deploy` stops at a failing build before Wrangler ever runs.
 
 Not verified, and not claimed to work:
 
 - **Behaviour across real NAT**, and whether any guest will need TURN. See the TURN section above.
 - **Real OBS Studio.** The view page was verified in Chrome, the same engine OBS embeds, but OBS itself was never run. The browser-source settings above come from the documented behaviour of those options, not from observation.
+- **A real Cloudflare deploy.** Only the dry run above was performed; no credentials exist on this machine, so nothing was ever uploaded and no deployed URL has been loaded in a browser.
 - **The podman self-hosting path.** Written, never run.
 - **The LiveKit Cloud path.** The switching procedure above is written from the documented behaviour of the build-time variable and the token signing, both of which were verified locally; no Cloud project has been created, so the procedure itself has not been walked through. The usage numbers are measured locally, not read off a Cloud dashboard.
 - **Browsers other than Chrome.** The guests are all on desktop Chrome, so that is the only target, and there is no mobile layout. Testing used Chrome Canary, the only Chrome installed on this machine.
@@ -329,6 +352,7 @@ src/lib/            Pure logic, all unit-tested
 src/pages/          index.astro (join + room), view.astro (OBS source)
 src/scripts/        Browser controllers for those two pages
 scripts/mint.ts     The link-minting CLI
+wrangler.jsonc      Cloudflare deploy config: dist/ as static assets, no Worker code
 ```
 
 Guest-facing copy is Indonesian.
