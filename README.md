@@ -224,6 +224,7 @@ It includes TURN, needs no server, no certificate, and no renewal schedule, and 
    ```
 
    This is not optional. The old tokens are signed with the old API secret and the Cloud project will reject them.
+   Minting refuses outright while `dist/` still holds the old address, so step 3 cannot be silently skipped.
 5. Send each guest their new link.
 
 **Guest identities do not change.**

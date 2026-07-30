@@ -12,6 +12,10 @@
  *
  * Argument parsing lives in src/lib/cli-args.ts so it can be tested directly.
  */
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { checkBuiltLivekitUrl, extractLivekitUrls } from '../src/lib/built-bundle.ts';
 import { parseMintArgs } from '../src/lib/cli-args.ts';
 import { slugifyGuestName } from '../src/lib/identity.ts';
 import { credentialsFromEnv, mintGuestToken, mintObsToken } from '../src/lib/token.ts';
@@ -31,11 +35,42 @@ function printUsage(): void {
   );
 }
 
+/** Absolute path of `dist/`, resolved from this script rather than the shell's cwd. */
+const distDir = fileURLToPath(new URL('../dist', import.meta.url));
+
+/**
+ * Every `ws://`/`wss://` address inlined into the built JavaScript under `dist/`.
+ *
+ * The walk is deliberately shallow in intent but recursive in fact: asset filenames are
+ * content-hashed and their directory is an Astro implementation detail, so nothing here
+ * may assume a fixed path. Returns null when there is no `dist/` at all - nothing has
+ * been built, so there is nothing to disagree with.
+ */
+function builtLivekitUrls(dir: string): string[] | null {
+  if (!existsSync(dir)) return null;
+  const urls = new Set<string>();
+  for (const entry of readdirSync(dir, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.js')) continue;
+    for (const url of extractLivekitUrls(readFileSync(join(entry.parentPath, entry.name), 'utf8'))) {
+      urls.add(url);
+    }
+  }
+  return [...urls];
+}
+
 async function main(): Promise<void> {
   const args = parseMintArgs(process.argv.slice(2), process.env);
   if (args.help) {
     printUsage();
     return;
+  }
+
+  // Guard before any token is minted: links minted against a stale build point guests at
+  // a server the deployed site will never talk to, and that only shows up on show day.
+  const built = builtLivekitUrls(distDir);
+  if (built !== null) {
+    const verdict = checkBuiltLivekitUrl({ configured: process.env.PUBLIC_LIVEKIT_URL, built });
+    if (!verdict.ok) throw new Error(verdict.message);
   }
 
   const creds = credentialsFromEnv();

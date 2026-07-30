@@ -15,7 +15,7 @@ Any change to slugging is a breaking change to every OBS scene the captain has s
 
 - **The media server is LiveKit Cloud's free Build plan**, not the self-hosted config. `livekit.yaml` and `podman-compose.yml` are the documented alternative, kept for the day the show outgrows the free allowance. See the Cloud and self-hosting sections of README.
 - **`PUBLIC_` variables are frozen into the bundle at build time**, so creating or editing `.env` changes nothing until you rebuild.
-  The build now throws instead of shipping a bundle with no server address; see the gate at the top of `astro.config.mjs`.
+  The build now throws instead of shipping a bundle with no server address; see the gate at the top of `astro.config.mjs`, and `npm run mint` refuses when an existing `dist/` was built against a different address (`src/lib/built-bundle.ts`).
   Changing the media server therefore means `npm run build` plus a redeploy, and changing credentials means re-minting every guest link.
   Identities are unaffected, so saved OBS scenes survive both.
 - **`token.ts` must not be imported by browser code.** It pulls in `livekit-server-sdk` and `node:crypto`. Browser-side token reading lives in `src/lib/jwt.ts` for exactly this reason.
