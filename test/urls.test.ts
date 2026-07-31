@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { joinUrl, viewUrl } from '../src/lib/urls.ts';
+import { joinUrl, stageUrl, viewUrl } from '../src/lib/urls.ts';
 import { VIEW_SOURCE_PARAM, parseViewSource } from '../src/lib/view-source.ts';
 
 describe('joinUrl', () => {
@@ -83,5 +83,41 @@ describe('viewUrl', () => {
     expect(viewUrl('https://x.test', 'budi', 'tok', 'screen')).toBe(
       viewUrl('https://x.test', 'budi', 'tok', 'screen'),
     );
+  });
+});
+
+describe('stageUrl', () => {
+  it('is a page of its own, addressing no particular guest', () => {
+    const url = new URL(stageUrl('https://ngobrolin.example.com', 'tok'));
+    expect(url.pathname).toBe('/stage');
+    expect(url.searchParams.get('t')).toBe('tok');
+    expect(url.searchParams.get('id')).toBeNull();
+  });
+
+  it('is one URL for the whole show', () => {
+    expect(stageUrl('https://x.test', 'tok')).toBe('https://x.test/stage?t=tok');
+  });
+
+  it('keeps a base path prefix, like every other link', () => {
+    expect(stageUrl('https://x.test/ngobrolin/', 'tok')).toBe('https://x.test/ngobrolin/stage?t=tok');
+  });
+
+  it('tolerates a base with or without a trailing slash', () => {
+    expect(stageUrl('http://localhost:4321/', 'tok')).toBe(stageUrl('http://localhost:4321', 'tok'));
+  });
+
+  /**
+   * The load-bearing one. Every OBS scene the captain has saved points at `/view`, and
+   * the composed stage is an addition, not a replacement: it may not move a byte of
+   * either existing URL, and it must not be reachable by hand-editing one of them.
+   */
+  it('does not touch either per-guest URL', () => {
+    expect(viewUrl('https://ngobrolin.example.com', 'budi-santoso', 'tok')).toBe(
+      'https://ngobrolin.example.com/view?id=budi-santoso&t=tok',
+    );
+    expect(viewUrl('https://ngobrolin.example.com', 'budi-santoso', 'tok', 'screen')).toBe(
+      'https://ngobrolin.example.com/view?id=budi-santoso&source=screen&t=tok',
+    );
+    expect(stageUrl('https://x.test', 'tok')).not.toContain('/view');
   });
 });

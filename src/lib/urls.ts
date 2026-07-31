@@ -42,6 +42,23 @@ export function viewUrl(
   return url.toString();
 }
 
+/**
+ * `<base>/stage?t=<token>` - the composed stage browser source, one for the show.
+ *
+ * A page of its own rather than another `view` parameter, and that is the point: every
+ * OBS scene the captain has saved points at `/view`, and the composed stage is an
+ * addition, never a reinterpretation of an existing URL. Nothing about it can reach a
+ * saved source by accident, because it is not the same page.
+ *
+ * There is no `id`. The stage is not addressed at a guest; it renders whoever is in
+ * the room, arranged by `src/lib/stage.ts`.
+ */
+export function stageUrl(baseUrl: string, token: string): string {
+  const url = new URL('stage', ensureTrailingSlash(baseUrl));
+  url.searchParams.set('t', token);
+  return url.toString();
+}
+
 function ensureTrailingSlash(baseUrl: string): string {
   return baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
 }

@@ -361,24 +361,31 @@ button {
   background: var(--danger);
 }
 
+/* The room, in whichever arrangement src/lib/stage.ts returned: an even grid of faces,
+   or one shared screen on stage with the faces beside it. Cells are positioned
+   absolutely from layoutCells() rather than by CSS, so this page and the composed OBS
+   source lay the same composition out with the same code and cannot drift apart. */
 .grid {
   flex: 1;
-  display: grid;
-  gap: 12px;
+  position: relative;
+  min-height: 0;
   padding: 16px 20px;
-  align-content: center;
-  justify-content: center;
-  /* grid-template-columns is set from JS via gridColumns(). */
 }
 
 .tile {
-  position: relative;
-  aspect-ratio: 16 / 9;
-  min-width: 0;
+  position: absolute;
   background: #000;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
+  /* Somebody starting a share moves every cell at once. Sliding rather than snapping
+     makes it read as a rearrangement rather than as the page having been replaced.
+     App only: the broadcast composition snaps, where a slide would be an effect. */
+  transition:
+    left 180ms ease,
+    top 180ms ease,
+    width 180ms ease,
+    height 180ms ease;
 }
 
 .tile video {
@@ -388,14 +395,23 @@ button {
   display: block;
 }
 
-.tile.is-local video {
+/* Self-view is mirrored because that is how a person expects to see themselves. It is
+   a self-view affordance and never reaches the broadcast - and it applies to the face
+   only: a mirrored copy of your own slides would be unreadable. */
+.tile.is-local[data-kind='camera'] video {
   transform: scaleX(-1);
 }
 
-/* A shared screen is letterboxed rather than cropped, in the grid for the same reason
-   as in the OBS source: the edges of a screen are content. */
+/* A shared screen is letterboxed rather than cropped, here for the same reason as in
+   the OBS sources: the edges of a screen are content. */
 .tile[data-kind='screen'] video {
   object-fit: contain;
+}
+
+/* The one on stage is the thing being looked at. Its letterbox bars go darker than a
+   face tile's black so the picture reads as the content and the bars as the frame. */
+.tile[data-slot='stage'] {
+  background: #05070a;
 }
 
 .tile-name {

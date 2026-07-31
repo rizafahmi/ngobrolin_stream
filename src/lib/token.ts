@@ -13,7 +13,7 @@
  *   somebody watching, not somebody appearing on the show.
  */
 import { AccessToken } from 'livekit-server-sdk';
-import { ROOM_NAME, guestIdentity, obsIdentity, slugifyGuestName } from './identity.ts';
+import { ROOM_NAME, STAGE_IDENTITY, guestIdentity, obsIdentity, slugifyGuestName } from './identity.ts';
 import type { ViewSource } from './view-source.ts';
 
 /** Five years. These links go in a chat thread and must outlive the current season. */
@@ -99,10 +99,46 @@ export async function mintObsToken(
 ): Promise<string> {
   const slug = slugifyGuestName(guestName);
   const source = options.source ?? 'camera';
-  const at = new AccessToken(creds.apiKey, creds.apiSecret, {
+  return subscribeOnlyToken(creds, {
     identity: obsIdentity(slug, source),
     name: source === 'screen' ? `OBS ${slug} layar` : `OBS ${slug}`,
-    ttl: options.ttlSeconds ?? DEFAULT_TTL_SECONDS,
+    ttlSeconds: options.ttlSeconds,
+  });
+}
+
+/**
+ * Mint the one subscribe-only token for the composed stage browser source.
+ *
+ * One per show rather than one per guest: the stage renders whoever is in the room, so
+ * there is nobody to parameterise it by. The grant is identical to a per-guest OBS
+ * token - subscribe only, hidden, recorder - and only the identity differs, which is
+ * what stops it evicting a guest's own two sources. See {@link STAGE_IDENTITY}.
+ */
+export async function mintStageToken(
+  creds: Credentials,
+  options: MintOptions = {},
+): Promise<string> {
+  return subscribeOnlyToken(creds, {
+    identity: STAGE_IDENTITY,
+    name: 'OBS panggung',
+    ttlSeconds: options.ttlSeconds,
+  });
+}
+
+/**
+ * The one grant every OBS connection gets, wherever it points.
+ *
+ * Shared so the three OBS tokens cannot drift apart: if a leaked link can only ever
+ * watch, that has to be true of all of them, not of whichever was written first.
+ */
+async function subscribeOnlyToken(
+  creds: Credentials,
+  { identity, name, ttlSeconds }: { identity: string; name: string; ttlSeconds?: number },
+): Promise<string> {
+  const at = new AccessToken(creds.apiKey, creds.apiSecret, {
+    identity,
+    name,
+    ttl: ttlSeconds ?? DEFAULT_TTL_SECONDS,
   });
   at.addGrant({
     roomJoin: true,

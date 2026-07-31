@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ROOM_NAME,
+  STAGE_IDENTITY,
   guestIdentity,
   isObsIdentity,
   obsIdentity,
@@ -69,5 +70,37 @@ describe('identities', () => {
 
   it('pins the room name, since every link ever minted embeds it', () => {
     expect(ROOM_NAME).toBe('ngobrolin');
+  });
+});
+
+/**
+ * The composed stage source is one per show, not one per guest, so it is the first
+ * identity in this system that is not derived from anybody's name. It still has to be
+ * provably unable to collide with one, because a collision would evict a live source
+ * mid-recording.
+ */
+describe('the stage identity', () => {
+  it('cannot collide with any guest identity, whatever they are called', () => {
+    // The separator is a dot, and a slug is only [a-z0-9-]. So no name can produce it.
+    expect(STAGE_IDENTITY).toContain('.');
+    expect(() => slugifyGuestName(STAGE_IDENTITY)).not.toThrow();
+    expect(slugifyGuestName(STAGE_IDENTITY)).not.toBe(STAGE_IDENTITY);
+  });
+
+  it('cannot collide with either of a guest’s two OBS identities', () => {
+    for (const name of ['stage', 'obs stage', 'obs', 'panggung']) {
+      const slug = slugifyGuestName(name);
+      expect(obsIdentity(slug, 'camera')).not.toBe(STAGE_IDENTITY);
+      expect(obsIdentity(slug, 'screen')).not.toBe(STAGE_IDENTITY);
+    }
+  });
+
+  it('is recognised as an OBS connection rather than a guest', () => {
+    expect(isObsIdentity(STAGE_IDENTITY)).toBe(true);
+    expect(isObsIdentity(guestIdentity('stage'))).toBe(false);
+  });
+
+  it('is one identity for the whole show, not one per guest', () => {
+    expect(STAGE_IDENTITY).toBe('obs.stage');
   });
 });

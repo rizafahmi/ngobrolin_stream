@@ -22,6 +22,18 @@ export const ROOM_NAME = 'ngobrolin';
 export const OBS_IDENTITY_PREFIX = 'obs-';
 
 /**
+ * The identity the composed stage browser source connects with.
+ *
+ * One per *show*, not one per guest: the stage is a single source that renders whoever
+ * is in the room, so there is nobody's name to derive it from. That makes it the first
+ * identity here that is not a slug, and it therefore has to be provably unable to
+ * collide with one. The dot does that: a slug is only `[a-z0-9-]`, so no guest name can
+ * ever produce `obs.stage`, whatever they are called - including a guest called
+ * "Stage", whose sources are `obs-stage` and `obs-stage.screen`.
+ */
+export const STAGE_IDENTITY = 'obs.stage';
+
+/**
  * Turn a human name into a stable, URL-safe slug.
  *
  * Deliberately lossy and deliberately boring: lowercase ASCII letters, digits and
@@ -75,5 +87,5 @@ export function obsIdentity(guestSlug: string, source: ViewSource = 'camera'): s
 
 /** True when an identity belongs to an OBS browser source rather than a guest. */
 export function isObsIdentity(identity: string): boolean {
-  return identity.startsWith(OBS_IDENTITY_PREFIX);
+  return identity.startsWith(OBS_IDENTITY_PREFIX) || identity === STAGE_IDENTITY;
 }

@@ -1,0 +1,113 @@
+---
+// The composed stage: one OBS browser source that is the whole room, arranged by the
+// same rule every guest's page uses. `?t=<token>` and nothing else - this source is not
+// addressed at a guest, so there is no `id`.
+//
+// Anything visible here goes on air, so there is deliberately no UI: no names, no
+// plates, no borders, no spinners, no error text, no cues. The captain composites
+// overlays in the scene as separate assets, and that stays true. When something goes
+// wrong the page stays transparent and the captain sees their background with nothing
+// on it, which is the correct failure mode during a live recording. Append &debug=1 to
+// surface a diagnostic overlay while setting things up; it is never shown otherwise.
+//
+// The per-guest `/view` sources are untouched and stay valid. This is an additional
+// source for a new scene, with the per-guest scene kept as the fallback.
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Ngobrolin - OBS stage</title>
+    <!-- Global, not scoped. Astro rewrites a plain <style> to `.cell:where(.astro-…)`,
+         and every cell on this page is built by JS, so it would never carry the scope
+         attribute and every rule below would silently miss. The symptom is subtle and
+         only visible on air: cells fall back to static flow and stack down the left. -->
+    <style is:global>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        /* Transparent, so the captain's existing background and overlay stack still
+           shows through around and behind the composition. OBS browser sources honour
+           page transparency; a plain browser tab shows black instead, which is the same
+           thing on air. This is why the cells carry their own background and the page
+           does not. */
+        background: transparent;
+      }
+
+      /* Fixed 1920x1080, scaled into whatever window it is in. In OBS the browser source
+         is set to exactly this and the scale is 1; a plain tab gets the identical
+         composition, just smaller, which is what makes checking it locally worth doing.
+         JS writes the transform - see fitCanvas in stage.ts. */
+      #canvas {
+        position: fixed;
+        left: 50%;
+        top: 50%;
+        width: 1920px;
+        height: 1080px;
+        transform: translate(-50%, -50%);
+      }
+
+      .cell {
+        position: absolute;
+        overflow: hidden;
+      }
+
+      /* A face cell is black behind its video so a guest with their camera off holds
+         their place instead of the whole composition reflowing. The stage cell is not:
+         a shared screen letterboxes, and the bars must be the captain's background
+         rather than an opaque black rectangle over it. */
+      .cell[data-kind='camera'] {
+        background: #000;
+      }
+
+      .cell video {
+        width: 100%;
+        height: 100%;
+        display: block;
+        /* Never mirrored: the self-view flip is an app affordance and must not reach
+           the broadcast. */
+      }
+
+      /* A face is cropped to fill its cell, where the edges are wall. A screen never is:
+         its edges are content, and on a shared window they are usually the thing being
+         pointed at. */
+      .cell[data-kind='camera'] video {
+        object-fit: cover;
+      }
+
+      .cell[data-kind='screen'] video {
+        object-fit: contain;
+      }
+
+      /* Only ever visible with &debug=1. */
+      #debug {
+        position: fixed;
+        left: 0;
+        top: 0;
+        margin: 0;
+        padding: 6px 10px;
+        font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #0f0;
+        background: rgba(0, 0, 0, 0.75);
+        white-space: pre;
+        z-index: 10;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="canvas"></div>
+    <pre id="debug" hidden></pre>
+
+    <script>
+      import { startStagePage } from '../scripts/stage.ts';
+      startStagePage();
+    </script>
+  </body>
+</html>

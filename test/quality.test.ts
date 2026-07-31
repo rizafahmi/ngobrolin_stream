@@ -8,6 +8,7 @@ import {
   SCREEN_SIMULCAST_LAYER_HEIGHTS,
   SIMULCAST_LAYER_HEIGHTS,
   screenSubscriptionQualityFor,
+  slotSubscriptionQualityFor,
   subscriptionQualityFor,
 } from '../src/lib/quality.ts';
 
@@ -53,16 +54,30 @@ describe('publish presets', () => {
 
 describe('screen share encoding policy', () => {
   it('takes its numbers from livekit’s own screen-share presets, not invented ones', () => {
-    expect(PUBLISH_SCREEN_PRESET.top).toBe(ScreenSharePresets.h1080fps15);
+    expect(PUBLISH_SCREEN_PRESET.top).toBe(ScreenSharePresets.h720fps15);
     expect(PUBLISH_SCREEN_PRESET.low).toBe(ScreenSharePresets.h360fps15);
   });
 
-  it('trades frame rate for pixels, because a screen is text and a face is motion', () => {
+  /**
+   * 720p, not the 1080p this used to publish.
+   *
+   * The composed stage renders the screen around 1500px wide rather than filling a
+   * 1920 frame, so the 1080p source was being downscaled on the way to air anyway. It
+   * also cuts the sharing guest's uplink from about 2.9 to 1.9 Mbps on top of their
+   * camera, and it is what makes handing every other guest a sharp copy affordable.
+   */
+  it('publishes the screen at 720p, the width the composed stage actually renders', () => {
+    expect(PUBLISH_SCREEN_PRESET.resolution).toMatchObject({ width: 1280, height: 720 });
+    expect(PUBLISH_SCREEN_PRESET.top.encoding.maxBitrate).toBe(1_500_000);
+  });
+
+  it('still trades frame rate for legibility, because a screen is text and a face is motion', () => {
     expect(PUBLISH_SCREEN_PRESET.top.encoding.maxFramerate).toBeLessThan(
       PUBLISH_VIDEO_PRESET.encoding.maxFramerate,
     );
-    expect(PUBLISH_SCREEN_PRESET.resolution.height).toBeGreaterThan(
-      PUBLISH_VIDEO_PRESET.resolution.height,
+    // Same pixels as a face now, at 40% of the bits, spent on half as many frames.
+    expect(PUBLISH_SCREEN_PRESET.top.encoding.maxBitrate).toBeLessThan(
+      PUBLISH_VIDEO_PRESET.encoding.maxBitrate,
     );
   });
 
@@ -73,9 +88,9 @@ describe('screen share encoding policy', () => {
   it('publishes two layers and no middle one, since only OBS and the grid subscribe', () => {
     expect(PUBLISH_SCREEN_PRESET.simulcast).toBe(true);
     expect(SCREEN_SIMULCAST_LAYER_HEIGHTS).toHaveLength(2);
-    expect(SCREEN_SIMULCAST_LAYER_HEIGHTS).toEqual([360, 1080]);
+    expect(SCREEN_SIMULCAST_LAYER_HEIGHTS).toEqual([360, 720]);
     // Three layers is the camera ladder. A middle screen layer would be encoded for
-    // nobody, since every subscriber is either OBS or a thumbnail-sized grid tile.
+    // nobody, since every subscriber is either a stage-sized or a thumbnail-sized box.
     expect(SCREEN_SIMULCAST_LAYER_HEIGHTS.length).toBeLessThan(SIMULCAST_LAYER_HEIGHTS.length);
   });
 
@@ -113,7 +128,7 @@ describe('screenSubscriptionQualityFor', () => {
   it('gives OBS the full screen, because that frame goes on air', () => {
     const obs = screenSubscriptionQualityFor('obs');
     expect(obs.quality).toBe(VideoQuality.HIGH);
-    expect(obs.dimensions).toEqual({ width: 1920, height: 1080 });
+    expect(obs.dimensions).toEqual({ width: 1280, height: 720 });
     expect(obs.dimensions.height).toBe(PUBLISH_SCREEN_PRESET.resolution.height);
   });
 
@@ -133,19 +148,116 @@ describe('screenSubscriptionQualityFor', () => {
 
   it('asks the grid for materially less than OBS, which is what keeps a share affordable', () => {
     const pixels = (d: { width: number; height: number }) => d.width * d.height;
-    expect(pixels(screenSubscriptionQualityFor('grid').dimensions) * 8).toBeLessThan(
+    expect(pixels(screenSubscriptionQualityFor('grid').dimensions) * 4).toBeLessThanOrEqual(
       pixels(screenSubscriptionQualityFor('obs').dimensions),
+    );
+    // The ratio that actually reaches the bandwidth meter, which is steeper than the
+    // pixel count: a quarter of the pixels costs about a quarter of the bits.
+    expect(PUBLISH_SCREEN_PRESET.low.encoding.maxBitrate * 3).toBeLessThan(
+      PUBLISH_SCREEN_PRESET.top.encoding.maxBitrate,
     );
   });
 
-  it('asks for more of a screen than of a face, at both ends', () => {
-    // A shared screen is the one thing on air where legibility beats smoothness, so it
-    // is deliberately the more expensive subscription of the two.
-    expect(screenSubscriptionQualityFor('obs').dimensions.height).toBeGreaterThan(
-      subscriptionQualityFor('obs').dimensions.height,
-    );
+  it('asks the guests for more of a screen than of a face', () => {
+    // A shared screen is the one thing where legibility beats smoothness, so at the
+    // guest end it is deliberately the more expensive subscription of the two. At the
+    // OBS end the two are now the same size: the screen dropped to 720p because the
+    // composed stage renders it around 1500px, not across a whole 1920 frame.
     expect(screenSubscriptionQualityFor('grid').dimensions.height).toBeGreaterThan(
       subscriptionQualityFor('grid').dimensions.height,
     );
+    expect(screenSubscriptionQualityFor('obs').dimensions).toEqual(
+      subscriptionQualityFor('obs').dimensions,
+    );
+  });
+});
+
+/**
+ * Quality by slot, which is the substantive half of the presentation layer.
+ *
+ * Before it, quality was a property of the *page*: OBS took the top layer, a guest took
+ * the bottom one. That is no longer enough, because the same track can be a 1500px
+ * stage or a 360px thumbnail depending on who is sharing, and the answer has to follow
+ * the track between them. Getting it wrong is silent in both directions: too low and
+ * the thing the feature exists to make readable stays blurry, too high and the
+ * bandwidth saving that makes the free plan fit quietly disappears.
+ */
+describe('slotSubscriptionQualityFor', () => {
+  it('gives the on-stage screen the top layer in both renders', () => {
+    for (const mode of ['obs', 'app'] as const) {
+      const q = slotSubscriptionQualityFor(mode, 'stage', 'screen');
+      expect(q.quality, mode).toBe(VideoQuality.HIGH);
+      expect(q.dimensions, mode).toEqual({ width: 1280, height: 720 });
+    }
+  });
+
+  it('is the entire fix for the blindness: a guest sees the stage sharp, not as a thumbnail', () => {
+    expect(slotSubscriptionQualityFor('app', 'stage', 'screen').dimensions.height).toBeGreaterThan(
+      slotSubscriptionQualityFor('app', 'filmstrip', 'screen').dimensions.height,
+    );
+    expect(slotSubscriptionQualityFor('app', 'stage', 'screen').dimensions.height).toBe(
+      SCREEN_SIMULCAST_LAYER_HEIGHTS.at(-1),
+    );
+  });
+
+  it('does not blanket-subscribe the composed OBS render at the top layer', () => {
+    const filmstrip = slotSubscriptionQualityFor('obs', 'filmstrip', 'camera');
+    expect(filmstrip.quality).toBe(VideoQuality.MEDIUM);
+    expect(filmstrip.dimensions).toEqual({ width: 640, height: 360 });
+  });
+
+  it('feeds every composed face the 360p layer, which is the size it actually renders', () => {
+    // A filmstrip face is 360px wide and an even-grid face on the 1920x1080 canvas is
+    // capped at 640px, so 640x360 covers both. Subscribing those at 720p would be a
+    // second full copy of every camera on top of the per-guest sources.
+    for (const slot of ['even', 'filmstrip'] as const) {
+      expect(slotSubscriptionQualityFor('obs', slot, 'camera').dimensions, slot).toEqual({
+        width: 640,
+        height: 360,
+      });
+    }
+  });
+
+  it('keeps the guests on the bottom layer for faces, sharing or not', () => {
+    for (const slot of ['even', 'filmstrip'] as const) {
+      const q = slotSubscriptionQualityFor('app', slot, 'camera');
+      expect(q.quality, slot).toBe(VideoQuality.LOW);
+      expect(q.dimensions, slot).toEqual({ width: 320, height: 180 });
+    }
+  });
+
+  it('agrees with the page-level policy it grew out of, so the two cannot drift', () => {
+    expect(slotSubscriptionQualityFor('app', 'even', 'camera')).toEqual(subscriptionQualityFor('grid'));
+    expect(slotSubscriptionQualityFor('app', 'filmstrip', 'screen')).toEqual(
+      screenSubscriptionQualityFor('grid'),
+    );
+    expect(slotSubscriptionQualityFor('obs', 'stage', 'screen')).toEqual(
+      screenSubscriptionQualityFor('obs'),
+    );
+  });
+
+  it('only ever asks for a layer the publisher actually sends', () => {
+    for (const mode of ['obs', 'app'] as const) {
+      for (const slot of ['stage', 'filmstrip', 'even'] as const) {
+        expect(SIMULCAST_LAYER_HEIGHTS, `${mode}/${slot}`).toContain(
+          slotSubscriptionQualityFor(mode, slot, 'camera').dimensions.height,
+        );
+        expect(SCREEN_SIMULCAST_LAYER_HEIGHTS, `${mode}/${slot}`).toContain(
+          slotSubscriptionQualityFor(mode, slot, 'screen').dimensions.height,
+        );
+      }
+    }
+  });
+
+  it('never asks a guest for more than it asks OBS for', () => {
+    const pixels = (d: { width: number; height: number }) => d.width * d.height;
+    for (const slot of ['stage', 'filmstrip', 'even'] as const) {
+      for (const kind of ['camera', 'screen'] as const) {
+        expect(
+          pixels(slotSubscriptionQualityFor('app', slot, kind).dimensions),
+          `${slot}/${kind}`,
+        ).toBeLessThanOrEqual(pixels(slotSubscriptionQualityFor('obs', slot, kind).dimensions));
+      }
+    }
   });
 });

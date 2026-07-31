@@ -18,8 +18,8 @@ import { fileURLToPath } from 'node:url';
 import { checkBuiltLivekitUrl, extractLivekitUrls } from '../src/lib/built-bundle.ts';
 import { parseMintArgs } from '../src/lib/cli-args.ts';
 import { slugifyGuestName } from '../src/lib/identity.ts';
-import { credentialsFromEnv, mintGuestToken, mintObsToken } from '../src/lib/token.ts';
-import { joinUrl, viewUrl } from '../src/lib/urls.ts';
+import { credentialsFromEnv, mintGuestToken, mintObsToken, mintStageToken } from '../src/lib/token.ts';
+import { joinUrl, stageUrl, viewUrl } from '../src/lib/urls.ts';
 
 function printUsage(): void {
   process.stdout.write(
@@ -107,6 +107,24 @@ async function main(): Promise<void> {
       ].join('\n'),
     );
   }
+
+  // Once for the show, after every guest, never inside the per-guest block. The stage
+  // renders whoever is in the room, so there is nothing to parameterise it by - and
+  // printing it per guest would invite the captain to add three of them, which is three
+  // identical participants on the meter and only one of them ever visible.
+  const stageToken = await mintStageToken(creds, { ttlSeconds: args.ttlSeconds });
+  process.stdout.write(
+    [
+      '',
+      '=== Panggung  (satu untuk seluruh acara)',
+      '',
+      'OBS browser source URL (panggung):',
+      `  ${stageUrl(args.baseUrl, stageToken)}`,
+      '',
+      `Berlaku sampai: ${expiresAt.toISOString().slice(0, 10)}`,
+      '',
+    ].join('\n'),
+  );
 }
 
 main().catch((error: unknown) => {

@@ -25,7 +25,6 @@ import { audioPlaybackNotice } from '../lib/audio-playback.ts';
 import { connectionStatus } from '../lib/connection-status.ts';
 import { deviceOptions, offerSpeakerPicker, resolveActiveDevice, type DeviceOption } from '../lib/devices.ts';
 import { ROOM_NAME } from '../lib/identity.ts';
-import { gridColumns, orderTiles, tileWidth } from '../lib/layout.ts';
 import { classifyJoinFailure, classifyMediaError, classifyScreenShareError } from '../lib/media-errors.ts';
 import { micCue, micLevelPercent, peakAmplitude } from '../lib/mic-cue.ts';
 import {
@@ -34,9 +33,9 @@ import {
   PUBLISH_SCREEN_AUDIO_PRESET,
   PUBLISH_SCREEN_PRESET,
   PUBLISH_VIDEO_PRESET,
-  screenSubscriptionQualityFor,
-  subscriptionQualityFor,
+  slotSubscriptionQualityFor,
 } from '../lib/quality.ts';
+import { compose, layoutCells, type CellBox, type CompositionParticipant } from '../lib/stage.ts';
 import { decodeTokenPayload } from '../lib/jwt.ts';
 
 const LIVEKIT_URL = import.meta.env.PUBLIC_LIVEKIT_URL as string | undefined;
@@ -48,19 +47,14 @@ interface PreviewState {
   audio: LocalAudioTrack | null;
 }
 
-/** One cell of the grid. A guest sharing their screen owns two of these. */
-interface TileSpec {
-  /** Unique per cell. `<identity>` for a face, `<identity>.screen` for a screen. */
-  key: string;
-  kind: 'camera' | 'screen';
-  participant: Participant;
-  isLocal: boolean;
-}
-
 export function startJoinPage(): void {
   const el = collectElements();
   const preview: PreviewState = { video: null, audio: null };
   let room: Room | null = null;
+  // The last subscription quality asked for per track. Re-rendering happens on every
+  // resize and every room event, and re-sending an identical preference each time
+  // would be a signalling storm for nothing.
+  const appliedQuality = new Map<string, string>();
   // Latest peak amplitude of this guest's own captured audio, 0..1. Fed by the single
   // analyser started in startLevelMonitor and read by whichever bar is on screen.
   let localLevel = 0;
@@ -412,11 +406,13 @@ export function startJoinPage(): void {
     target
       .on(RoomEvent.ParticipantConnected, rerender)
       .on(RoomEvent.ParticipantDisconnected, rerender)
-      .on(RoomEvent.TrackSubscribed, (_track, publication) => {
-        applyGridQuality(publication);
+      // Quality is no longer applied here: it is a property of the slot the track lands
+      // in, which renderGrid computes and applyCompositionQuality then acts on.
+      .on(RoomEvent.TrackSubscribed, rerender)
+      .on(RoomEvent.TrackUnsubscribed, (_track, publication) => {
+        appliedQuality.delete(publication.trackSid);
         renderGrid();
       })
-      .on(RoomEvent.TrackUnsubscribed, rerender)
       .on(RoomEvent.TrackMuted, rerender)
       .on(RoomEvent.TrackUnmuted, rerender)
       .on(RoomEvent.ParticipantNameChanged, rerender)
@@ -431,9 +427,13 @@ export function startJoinPage(): void {
         paintScreenButton();
         renderGrid();
       })
-      // A remote guest starting or stopping a share adds or removes a whole cell.
+      // A remote guest starting or stopping a share rearranges the whole page: the
+      // even grid becomes a stage plus a filmstrip, or the other way round.
       .on(RoomEvent.TrackPublished, rerender)
-      .on(RoomEvent.TrackUnpublished, rerender)
+      .on(RoomEvent.TrackUnpublished, (publication) => {
+        appliedQuality.delete(publication.trackSid);
+        renderGrid();
+      })
       // The level monitor's frame loop repaints the cues anyway; this is the correct
       // trigger for the remote half of them and keeps the outlines honest in a
       // backgrounded tab, where requestAnimationFrame stops firing.
@@ -461,118 +461,136 @@ export function startJoinPage(): void {
   }
 
   /**
-   * Ask the SFU for the smallest layer of every remote video track.
+   * Ask the SFU for the layer each cell's *slot* deserves, and only when it changed.
    *
-   * OBS is the only consumer that needs full resolution. Doing this on every
-   * subscription is what keeps a five-person room from costing each guest four
-   * simultaneous 720p downstreams - and it matters more for a shared screen than for a
-   * camera, since a screen's top layer is 1080p.
+   * This used to be a one-shot on TrackSubscribed, which was enough while every cell was
+   * the same size. It is not enough now: a screen promoted to the stage has to upgrade to
+   * a sharp copy - that upgrade is the entire fix for guests flying blind - and the faces
+   * it displaced have to drop back down, or the bandwidth saving quietly disappears. So
+   * this runs on every render, which is every time the composition can have changed.
+   *
+   * Local tracks are skipped: nothing is subscribed to them, they are captured here.
    */
-  function applyGridQuality(publication: RemoteTrackPublication): void {
-    if (publication.kind !== Track.Kind.Video) return;
-    const { quality, dimensions } =
-      publication.source === Track.Source.ScreenShare
-        ? screenSubscriptionQualityFor('grid')
-        : subscriptionQualityFor('grid');
-    publication.setVideoQuality(quality);
-    publication.setVideoDimensions(dimensions);
+  function applyCompositionQuality(boxes: CellBox[]): void {
+    if (!room) return;
+    for (const box of boxes) {
+      if (box.isLocal) continue;
+      const publication = remotePublicationFor(box);
+      if (!publication?.isSubscribed || publication.kind !== Track.Kind.Video) continue;
+      const { quality, dimensions } = slotSubscriptionQualityFor('app', box.slot, box.kind);
+      const wanted = `${quality}:${dimensions.width}x${dimensions.height}`;
+      if (appliedQuality.get(publication.trackSid) === wanted) continue;
+      appliedQuality.set(publication.trackSid, wanted);
+      publication.setVideoQuality(quality);
+      publication.setVideoDimensions(dimensions);
+    }
+  }
+
+  function remotePublicationFor(box: CellBox): RemoteTrackPublication | undefined {
+    const source = box.kind === 'screen' ? Track.Source.ScreenShare : Track.Source.Camera;
+    return room?.remoteParticipants.get(box.identity)?.getTrackPublication(source) as
+      | RemoteTrackPublication
+      | undefined;
   }
 
   // ---------- grid rendering ----------
 
   /**
-   * The tiles the grid should be showing, keyed rather than identified.
+   * The room state the composition is derived from.
    *
-   * A guest sharing their screen occupies two cells, so a participant identity is no
-   * longer a unique key. `key` is what the DOM is keyed on and what the order is sorted
-   * by: `<identity>` for a face and `<identity>.screen` for a screen, which sorts a
-   * screen immediately after the face it belongs to.
+   * "Sharing" is read from the *publication* rather than from a subscribed track, so the
+   * arrangement settles before the subscription is made: the slot is what decides which
+   * layer to ask for, and waiting for the track would mean asking for the wrong one and
+   * correcting it a moment later.
    *
-   * The local guest deliberately gets no screen tile. They are looking at the thing
-   * they are sharing; adding a tile of it means a window inside a window inside a
-   * window whenever they share the whole display.
+   * The local guest is in here on exactly the same terms as everybody else, which is a
+   * deliberate change: they used to get no cell for their own screen, and the result was
+   * a sharer who could not tell what was going out. Sharing a whole display makes a
+   * tunnel of the stage, and that is a much smaller price than flying blind.
    */
-  function tileSpecs(): TileSpec[] {
+  function compositionParticipants(): CompositionParticipant[] {
     if (!room) return [];
-    const specs: TileSpec[] = [];
+    const list: CompositionParticipant[] = [];
     for (const participant of Array.from(room.remoteParticipants.values()) as RemoteParticipant[]) {
-      specs.push({
-        key: participant.identity,
-        kind: 'camera',
-        participant,
-        isLocal: false,
-      });
-      if (participant.getTrackPublication(Track.Source.ScreenShare)?.track) {
-        specs.push({
-          key: `${participant.identity}.screen`,
-          kind: 'screen',
-          participant,
-          isLocal: false,
-        });
-      }
+      list.push({ identity: participant.identity, isLocal: false, sharing: isSharing(participant) });
     }
-    specs.push({
-      key: room.localParticipant.identity,
-      kind: 'camera',
-      participant: room.localParticipant,
+    list.push({
+      identity: room.localParticipant.identity,
       isLocal: true,
+      sharing: isSharing(room.localParticipant),
     });
-    return specs;
+    return list;
   }
 
+  function isSharing(participant: Participant): boolean {
+    const publication = participant.getTrackPublication(Track.Source.ScreenShare);
+    return Boolean(publication) && !publication!.isMuted;
+  }
+
+  /**
+   * Draw the arrangement `src/lib/stage.ts` returned.
+   *
+   * Same composition the OBS stage source draws, laid out by the same function, sized to
+   * this guest's own window rather than to a fixed broadcast canvas. Cells are keyed and
+   * repositioned rather than rebuilt, so a face demoted from the even grid to the
+   * filmstrip is the same element moving: re-attaching its track would flash it black.
+   */
   function renderGrid(): void {
     if (!room) return;
 
-    const tiles = orderTiles(tileSpecs().map((spec) => ({ ...spec, identity: spec.key })));
+    const composition = compose(compositionParticipants(), 'app');
+    const boxes = layoutCells(composition, gridArea());
 
-    sizeGrid(tiles.length);
+    el.grid.dataset.layout = composition.layout;
 
     const seen = new Set<string>();
-    for (const tile of tiles) {
-      seen.add(tile.key);
-      renderTile(tile);
+    for (const box of boxes) {
+      seen.add(box.key);
+      renderCell(box);
     }
     for (const node of Array.from(el.grid.children) as HTMLElement[]) {
       if (!seen.has(node.dataset.key ?? '')) node.remove();
     }
-    // Re-append in order so DOM order matches the intended tile order.
-    for (const tile of tiles) {
-      const node = el.grid.querySelector<HTMLElement>(`[data-key="${cssEscape(tile.key)}"]`);
-      if (node) el.grid.append(node);
-    }
 
-    // A tile created this render has no cues on it yet, and whether anyone's audio is
+    applyCompositionQuality(boxes);
+    // A cell created this render has no cues on it yet, and whether anyone's audio is
     // playable depends on who is in the room.
     paintCues();
     updateAudioNotice();
   }
 
   /**
-   * Size the tracks to the largest tiles that still fit without scrolling.
+   * The area the cells have to fit into, without scrolling.
    *
-   * The grid's own box is the available area: it is the flex child between the
-   * header and the control bar, so its height already excludes both.
+   * The grid's own box: it is the flex child between the header and the control bar, so
+   * its height already excludes both.
    */
-  function sizeGrid(tileCount: number): void {
-    if (tileCount === 0) return;
+  function gridArea(): { width: number; height: number } {
     const style = getComputedStyle(el.grid);
-    const width = el.grid.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-    const height = el.grid.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
-    const size = tileWidth(tileCount, width, height);
-    el.grid.style.gridTemplateColumns = `repeat(${gridColumns(tileCount)}, ${size}px)`;
+    return {
+      width: Math.max(1, el.grid.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)),
+      height: Math.max(1, el.grid.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)),
+    };
   }
 
-  function renderTile(spec: TileSpec): void {
-    if (spec.kind === 'screen') {
-      renderScreenTile(spec);
-      return;
-    }
-    const { participant, isLocal } = spec;
-    let node = el.grid.querySelector<HTMLElement>(`[data-key="${cssEscape(spec.key)}"]`);
+  function renderCell(box: CellBox): void {
+    const participant = participantByIdentity(box.identity);
+    if (!participant) return;
+    const node = box.kind === 'screen' ? renderScreenTile(box, participant) : renderTile(box, participant);
+    node.dataset.slot = box.slot;
+    node.style.left = `${box.left}px`;
+    node.style.top = `${box.top}px`;
+    node.style.width = `${box.width}px`;
+    node.style.height = `${box.height}px`;
+  }
+
+  function renderTile(box: CellBox, participant: Participant): HTMLElement {
+    const isLocal = box.isLocal;
+    let node = el.grid.querySelector<HTMLElement>(`[data-key="${cssEscape(box.key)}"]`);
     if (!node) {
       node = document.createElement('div');
       node.className = 'tile';
-      node.dataset.key = spec.key;
+      node.dataset.key = box.key;
       node.dataset.kind = 'camera';
       node.dataset.identity = participant.identity;
       node.innerHTML = `
@@ -636,37 +654,41 @@ export function startJoinPage(): void {
     // A participant with no microphone publication at all counts as muted: from the
     // other guests' side the effect is identical.
     mutedBadge.hidden = !(micPub?.isMuted ?? true);
+    return node;
   }
 
   /**
-   * A remote guest's shared screen, as its own cell.
+   * A shared screen, as its own cell - usually the one on stage.
    *
    * Deliberately barer than a camera tile: a name so it is clear whose screen this is,
    * and nothing else. No avatar (a screen has no fallback worth drawing), no muted
    * badge and no speaking cues (they belong to a person, and this cell is not one).
+   * The name is app chrome and stays on this side of the line; the composed OBS render
+   * draws no text at all.
    *
    * The screen's audio is attached here, so a guest can hear the clip they are
-   * reacting to. The captain gets that audio separately and cleanly, as part of the
-   * screen browser source, rather than as whatever the sharer's microphone caught.
+   * reacting to - unless it is *their own* screen, where playing it back would be a
+   * feedback loop into their own microphone, exactly as with their own voice.
    */
-  function renderScreenTile(spec: TileSpec): void {
-    const { participant } = spec;
-    let node = el.grid.querySelector<HTMLElement>(`[data-key="${cssEscape(spec.key)}"]`);
+  function renderScreenTile(box: CellBox, participant: Participant): HTMLElement {
+    let node = el.grid.querySelector<HTMLElement>(`[data-key="${cssEscape(box.key)}"]`);
     if (!node) {
       node = document.createElement('div');
       node.className = 'tile';
-      node.dataset.key = spec.key;
+      node.dataset.key = box.key;
       node.dataset.kind = 'screen';
       node.dataset.identity = participant.identity;
       node.innerHTML = `
-        <video autoplay playsinline></video>
+        <video autoplay playsinline muted></video>
         <span class="tile-name"></span>`;
       el.grid.append(node);
     }
+    node.classList.toggle('is-local', box.isLocal);
 
     const video = node.querySelector('video') as HTMLVideoElement;
     const nameLabel = node.querySelector('.tile-name') as HTMLElement;
-    nameLabel.textContent = `Layar ${participant.name || participant.identity}`;
+    const displayName = participant.name || participant.identity;
+    nameLabel.textContent = box.isLocal ? `Layar kamu` : `Layar ${displayName}`;
 
     const screenPub = participant.getTrackPublication(Track.Source.ScreenShare);
     if (screenPub?.track && video.dataset.trackSid !== screenPub.trackSid) {
@@ -675,7 +697,7 @@ export function startJoinPage(): void {
     }
 
     const screenAudioPub = participant.getTrackPublication(Track.Source.ScreenShareAudio);
-    if (screenAudioPub?.track) {
+    if (!box.isLocal && screenAudioPub?.track) {
       let audio = node.querySelector('audio');
       if (!audio) {
         audio = document.createElement('audio');
@@ -687,6 +709,7 @@ export function startJoinPage(): void {
         audio.dataset.trackSid = screenAudioPub.trackSid;
       }
     }
+    return node;
   }
 
   function cssEscape(value: string): string {

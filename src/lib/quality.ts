@@ -14,8 +14,16 @@
  */
 
 import { ScreenSharePresets, VideoQuality } from 'livekit-client';
+import type { CellKind, RenderMode, StageSlot } from './stage.ts';
 
-/** What a given page wants out of a subscription. */
+/**
+ * What a given page wants out of a subscription.
+ *
+ * The same two consumers `RenderMode` in `stage.ts` names, with `grid` where that says
+ * `app`. The older name is kept because it is what the per-guest OBS pages have always
+ * used and it reads correctly there; the composition needed a word that could not be
+ * confused with the *even grid* slot, which is a different thing entirely.
+ */
 export type ViewContext = 'obs' | 'grid';
 
 export interface SubscriptionQuality {
@@ -89,20 +97,26 @@ export const AUDIO_CAPTURE_CONSTRAINTS = {
  * The numbers come from livekit's own `ScreenSharePresets` rather than being invented
  * here, and both chosen presets carry livekit's `medium` encoding priority.
  *
- * - **1920x1080 at 15 fps, 2.5 Mbps** for the layer OBS takes. 1080p because a 720p
- *   capture of a 1440p laptop display loses small text outright, and 15 fps because a
- *   slide or an editor changes a few times a minute; spending the same 2.5 Mbps on 30
- *   fps would halve the bits available per frame for no visible gain.
- * - **640x360 at 15 fps, 400 kbps** for the layer the in-room grid takes. A grid tile
- *   is about 450 px wide during a three-guest show, so this is already more pixels
- *   than the tile can show.
+ * - **1280x720 at 15 fps, 1.5 Mbps** for the layer that goes on stage. 15 fps because a
+ *   slide or an editor changes a few times a minute; spending the same bits on 30 fps
+ *   would halve what is available per frame for no visible gain.
+ * - **640x360 at 15 fps, 400 kbps** for the layer a filmstrip cell takes. That cell is
+ *   360 px wide, so this is already more pixels than it can show.
+ *
+ * **720p, where this used to publish 1080p.** Three reasons, and the first is the one
+ * that matters: the composed stage renders the screen around 1500 px wide rather than
+ * across a whole 1920 frame, so the extra pixels were being thrown away on the way to
+ * air. It also cuts the sharing guest's uplink from about 2.9 to 1.9 Mbps on top of
+ * their camera, on a home connection. And it is what makes the real fix affordable at
+ * all: handing every *other* guest a sharp copy of the stage costs 1.5 Mbps a leg
+ * instead of 2.5, which is the difference between the free plan fitting and not.
  *
  * **Two layers, not three.** The camera ladder has a middle 360p layer because a
- * guest's tile can be any size. A screen has exactly two consumers, at the two ends of
- * the ladder, so a middle layer would be encoded for nobody and would take its
+ * guest's tile can be any size. A screen has exactly two sizes - on stage, or a
+ * filmstrip cell - so a middle layer would be encoded for nobody and would take its
  * bitrate from the layer that goes on air. Simulcast itself stays on, though: without
- * it the grid would have to subscribe to the same 2.5 Mbps stream OBS takes, and one
- * leg per guest at that rate is what turns a screen share into a bandwidth problem.
+ * it every filmstrip cell would have to subscribe to the full stage copy, and one leg
+ * per guest at that rate is what turns a screen share into a bandwidth problem.
  * See the screen-share cost table in README.
  *
  * `contentHint: 'detail'` tells the encoder this is text and UI, not video, so it
@@ -114,9 +128,9 @@ export const AUDIO_CAPTURE_CONSTRAINTS = {
  * here, for a reason worth knowing: see the note on `suppressLocalAudioPlayback`.
  */
 export const PUBLISH_SCREEN_PRESET = {
-  top: ScreenSharePresets.h1080fps15,
+  top: ScreenSharePresets.h720fps15,
   low: ScreenSharePresets.h360fps15,
-  resolution: ScreenSharePresets.h1080fps15.resolution,
+  resolution: ScreenSharePresets.h720fps15.resolution,
   contentHint: 'detail',
   simulcast: true,
 } as const;
@@ -124,7 +138,7 @@ export const PUBLISH_SCREEN_PRESET = {
 /** Height in pixels of each layer a shared screen is published in. Low first. */
 export const SCREEN_SIMULCAST_LAYER_HEIGHTS = [
   ScreenSharePresets.h360fps15.height,
-  ScreenSharePresets.h1080fps15.height,
+  ScreenSharePresets.h720fps15.height,
 ] as const;
 
 /**
@@ -182,5 +196,61 @@ export function screenSubscriptionQualityFor(context: ViewContext): Subscription
   return {
     quality: context === 'obs' ? VideoQuality.HIGH : VideoQuality.LOW,
     dimensions: { width: preset.width, height: preset.height },
+  };
+}
+
+/**
+ * Pick what a page should ask the SFU for, given **where the track is being drawn**.
+ *
+ * This is the presentation layer's substantive engineering, and it is a strictly
+ * stronger rule than the two functions above. Those answer "which page is this?", which
+ * was enough while every page drew every track at one size. It is not enough now: the
+ * same screen track is a 1500 px stage on one render and a 360 px filmstrip cell on
+ * another, and it moves between the two whenever somebody starts or stops sharing.
+ *
+ * Both directions of getting it wrong are silent:
+ *
+ * - Too low on the stage and the picture stays blurry, which is the exact blindness
+ *   this feature was built to fix.
+ * - Too high in the filmstrip and the bandwidth saving quietly disappears, which shows
+ *   up a month later as a LiveKit meter past its allowance mid-recording.
+ *
+ * So the mapping must be **re-applied when the composition changes**, not once when a
+ * track is subscribed. See `applyCompositionQuality` in the two page controllers.
+ *
+ * The table, and why each cell is what it is:
+ *
+ * | | on stage | filmstrip | even grid |
+ * | --- | --- | --- | --- |
+ * | OBS screen | 720p top layer, it is the picture | 360p, it is a thumbnail | n/a |
+ * | OBS face | 720p, only if a face ever goes on stage | 360p, 360 px wide | 360p, capped at 640 px |
+ * | guest screen | 720p top layer - *this is the fix* | 360p | n/a |
+ * | guest face | 720p | 180p bottom layer | 180p, exactly as today |
+ *
+ * The one entry worth defending is **OBS faces in the even grid at 360p**. The composed
+ * canvas caps an even-grid cell at 640 px (`OBS_GRID_MAX_TILE_WIDTH`), which the 360p
+ * layer covers at every plausible room size, and the alternative is a second full copy
+ * of every camera on top of the per-guest sources the captain still runs for audio. A
+ * guest who genuinely needs the whole 1920 frame is what the per-guest source is for.
+ */
+export function slotSubscriptionQualityFor(
+  mode: RenderMode,
+  slot: StageSlot,
+  kind: CellKind,
+): SubscriptionQuality {
+  const screen = kind === 'screen';
+
+  if (slot === 'stage') {
+    return screen ? screenSubscriptionQualityFor('obs') : subscriptionQualityFor('obs');
+  }
+  if (screen) {
+    return screenSubscriptionQualityFor('grid');
+  }
+  if (mode === 'app') {
+    return subscriptionQualityFor('grid');
+  }
+  return {
+    quality: VideoQuality.MEDIUM,
+    dimensions: { width: 640, height: SIMULCAST_LAYER_HEIGHTS[1] },
   };
 }

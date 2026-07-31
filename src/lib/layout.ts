@@ -24,7 +24,12 @@ export function gridColumns(tileCount: number): number {
 /** Gap between tiles, in px. Must match the `gap` in .grid. */
 export const GRID_GAP = 12;
 
-/** Ceiling on tile width, so a one-guest room does not become a wall of face. */
+/**
+ * Ceiling on tile width, so a one-guest room does not become a wall of face.
+ *
+ * The default for the room grid. The composed broadcast canvas passes its own, for a
+ * different reason - see `OBS_GRID_MAX_TILE_WIDTH` in `stage.ts`.
+ */
 export const MAX_TILE_WIDTH = 560;
 
 /** Tiles are 16:9 to match what guests publish. */
@@ -38,7 +43,12 @@ const ASPECT = 16 / 9;
  * width, five are limited by height. Getting this wrong means the grid scrolls, and
  * a guest who has to scroll during a recording will not notice someone talking.
  */
-export function tileWidth(tileCount: number, availableWidth: number, availableHeight: number): number {
+export function tileWidth(
+  tileCount: number,
+  availableWidth: number,
+  availableHeight: number,
+  maxWidth: number = MAX_TILE_WIDTH,
+): number {
   const cols = gridColumns(tileCount);
   const rows = gridRows(tileCount);
 
@@ -46,7 +56,7 @@ export function tileWidth(tileCount: number, availableWidth: number, availableHe
   const byHeight = ((availableHeight - GRID_GAP * (rows - 1)) / rows) * ASPECT;
 
   // Floor keeps sub-pixel rounding from pushing the last column over the edge.
-  return Math.max(1, Math.floor(Math.min(byWidth, byHeight, MAX_TILE_WIDTH)));
+  return Math.max(1, Math.floor(Math.min(byWidth, byHeight, maxWidth)));
 }
 
 /** Rows implied by the column count. Used only to keep tiles from overflowing. */

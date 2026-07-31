@@ -4,8 +4,9 @@ import {
   credentialsFromEnv,
   mintGuestToken,
   mintObsToken,
+  mintStageToken,
 } from '../src/lib/token.ts';
-import { ROOM_NAME } from '../src/lib/identity.ts';
+import { ROOM_NAME, STAGE_IDENTITY } from '../src/lib/identity.ts';
 
 const CREDS = { apiKey: 'devkey', apiSecret: 'secret-that-is-long-enough-for-hs256' };
 
@@ -111,6 +112,43 @@ describe('mintObsToken', () => {
       canSubscribe: true,
       hidden: true,
     });
+  });
+});
+
+describe('mintStageToken', () => {
+  it('is one token for the whole show, not one per guest', async () => {
+    const a = claimsOf(await mintStageToken(CREDS));
+    const b = claimsOf(await mintStageToken(CREDS));
+    expect(a.sub).toBe(STAGE_IDENTITY);
+    expect(b.sub).toBe(a.sub);
+  });
+
+  it('carries exactly the grant the per-guest OBS tokens carry', async () => {
+    const grant = claimsOf(await mintStageToken(CREDS)).video;
+    expect(grant).toMatchObject({
+      roomJoin: true,
+      room: ROOM_NAME,
+      canPublish: false,
+      canPublishData: false,
+      canSubscribe: true,
+      hidden: true,
+      recorder: true,
+    });
+  });
+
+  it('cannot evict a guest’s own OBS sources', async () => {
+    const stage = claimsOf(await mintStageToken(CREDS)).sub;
+    for (const source of ['camera', 'screen'] as const) {
+      expect(claimsOf(await mintObsToken(CREDS, 'Stage', { source })).sub).not.toBe(stage);
+    }
+  });
+
+  it('honours an explicit ttl, like every other token', async () => {
+    const { exp, nbf } = claimsOf(await mintStageToken(CREDS, { ttlSeconds: 3600 }));
+    expect(exp - nbf).toBe(3600);
+    expect(claimsOf(await mintStageToken(CREDS)).exp - claimsOf(await mintStageToken(CREDS)).nbf).toBe(
+      DEFAULT_TTL_SECONDS,
+    );
   });
 });
 

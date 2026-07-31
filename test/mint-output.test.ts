@@ -19,6 +19,21 @@ const BASE = 'https://ngobrolin.example.com';
 
 let dir: string;
 let output: string;
+/** The same run with three guests, which is what the captain actually types. */
+let threeGuests: string;
+
+function mint(...names: string[]): string {
+  return execFileSync(process.execPath, [join(dir, 'scripts/mint.ts'), ...names, '--base', BASE], {
+    cwd: dir,
+    env: {
+      ...process.env,
+      LIVEKIT_API_KEY: 'placeholder-api-key',
+      LIVEKIT_API_SECRET: 'placeholder-api-secret-long-enough-for-signing',
+    },
+    encoding: 'utf8',
+    stdio: 'pipe',
+  });
+}
 
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), 'ngobrolin-mint-output-'));
@@ -26,20 +41,8 @@ beforeAll(() => {
     cpSync(join(projectRoot, entry), join(dir, entry), { recursive: true });
   }
   symlinkSync(join(projectRoot, 'node_modules'), join(dir, 'node_modules'), 'dir');
-  output = execFileSync(
-    process.execPath,
-    [join(dir, 'scripts/mint.ts'), 'Budi Santoso', '--base', BASE],
-    {
-      cwd: dir,
-      env: {
-        ...process.env,
-        LIVEKIT_API_KEY: 'placeholder-api-key',
-        LIVEKIT_API_SECRET: 'placeholder-api-secret-long-enough-for-signing',
-      },
-      encoding: 'utf8',
-      stdio: 'pipe',
-    },
-  );
+  output = mint('Budi Santoso');
+  threeGuests = mint('Budi Santoso', 'Sari Dewi', 'Andre Wibowo');
 }, 60_000);
 
 afterAll(() => {
@@ -47,8 +50,8 @@ afterAll(() => {
 });
 
 /** The URLs printed, in the order they appear. */
-function printedUrls(): string[] {
-  return output.match(new RegExp(`${BASE}\\S+`, 'g')) ?? [];
+function printedUrls(text = output): string[] {
+  return text.match(new RegExp(`${BASE}\\S+`, 'g')) ?? [];
 }
 
 describe('mint output', () => {
@@ -56,9 +59,8 @@ describe('mint output', () => {
     expect(output).toContain('=== Budi Santoso  (id: budi-santoso)');
   });
 
-  it('prints three URLs: the guest link, the camera source, then the screen source', () => {
+  it('prints the guest link, the camera source, then the screen source, per guest', () => {
     const urls = printedUrls();
-    expect(urls).toHaveLength(3);
     expect(urls[0]).toMatch(/^https:\/\/ngobrolin\.example\.com\/\?t=/);
     expect(urls[1]).toMatch(/^https:\/\/ngobrolin\.example\.com\/view\?id=budi-santoso&t=/);
     expect(urls[2]).toMatch(
@@ -89,5 +91,46 @@ describe('mint output', () => {
 
   it('still says when the links expire', () => {
     expect(output).toMatch(/Berlaku sampai: \d{4}-\d{2}-\d{2}/);
+  });
+});
+
+/**
+ * The composed stage is one source for the show, not one per guest. Printing it inside
+ * the per-guest block would invite the captain to add three of them, which is three
+ * identical participants on the meter and only one of them ever visible.
+ */
+describe('the stage source URL', () => {
+  const stagePattern = /^https:\/\/ngobrolin\.example\.com\/stage\?t=/;
+
+  it('is printed exactly once for a single guest', () => {
+    expect(printedUrls().filter((u) => stagePattern.test(u))).toHaveLength(1);
+  });
+
+  it('is still printed exactly once for a three-guest show', () => {
+    expect(printedUrls(threeGuests).filter((u) => stagePattern.test(u))).toHaveLength(1);
+  });
+
+  it('comes last, after every guest, so it reads as a per-show line', () => {
+    const urls = printedUrls(threeGuests);
+    expect(stagePattern.test(urls.at(-1)!)).toBe(true);
+  });
+
+  it('is labelled so it cannot be mistaken for a guest source', () => {
+    expect(output).toContain('OBS browser source URL (panggung):');
+  });
+
+  it('leaves every per-guest URL exactly where it was', () => {
+    // Three guests, three URLs each, then one stage URL. Nothing shifted, nothing lost.
+    const urls = printedUrls(threeGuests);
+    expect(urls).toHaveLength(10);
+    for (const [index, slug] of ['budi-santoso', 'sari-dewi', 'andre-wibowo'].entries()) {
+      expect(urls[index * 3]).toMatch(/^https:\/\/ngobrolin\.example\.com\/\?t=/);
+      expect(urls[index * 3 + 1]).toMatch(
+        new RegExp(`^https://ngobrolin\\.example\\.com/view\\?id=${slug}&t=`),
+      );
+      expect(urls[index * 3 + 2]).toMatch(
+        new RegExp(`^https://ngobrolin\\.example\\.com/view\\?id=${slug}&source=screen&t=`),
+      );
+    }
   });
 });
